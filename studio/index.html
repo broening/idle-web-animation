@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idle Studio</title>
+<link rel="stylesheet" href="../player/idle.css">
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+
+<div class="app">
+
+  <main class="stage-col">
+    <div class="stage-wrap">
+      <div id="stage" class="stage"></div>
+      <canvas id="overlay" class="overlay"></canvas>
+    </div>
+
+    <div class="transport">
+      <button id="playBtn" class="btn primary" type="button">Pause</button>
+      <input id="scrub" class="scrub" type="range" min="0" max="8" step="0.01" value="0">
+      <output id="timeOut" class="time">0.00 s</output>
+      <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
+      <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
+      <label class="chk"><input id="showBg" type="checkbox" checked> backdrop</label>
+    </div>
+  </main>
+
+  <aside class="panel">
+
+    <header class="panel-head">
+      <h1>Idle Studio</h1>
+      <select id="figureSel" class="sel"></select>
+    </header>
+
+    <section class="card">
+      <h2>Layers</h2>
+      <p class="hint">Pick a layer, then drag its dot on the stage to move the
+      pivot. The number lands straight in figure.json.</p>
+      <ul id="layerList" class="layers"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Motion</h2>
+      <div id="motionCtl" class="ctl"></div>
+    </section>
+
+    <section class="card">
+      <h2>Check</h2>
+      <p class="hint">A single screenshot cannot prove movement. The contact
+      sheet renders 24 frames of the 8 second window into one image.</p>
+      <div class="row">
+        <button id="sheetBtn" class="btn" type="button">Contact sheet</button>
+        <button id="sheetSave" class="btn ghost" type="button">Save PNG</button>
+        <button id="eventsBtn" class="btn ghost" type="button">Events</button>
+      </div>
+      <canvas id="sheet" class="sheet"></canvas>
+      <p class="hint mt">A blink lasts about 70 ms and the sheet samples every
+      330 ms, so the sheet misses most of them. Events scans 30 seconds at 60
+      frames and lists what actually fires.</p>
+      <pre id="eventsOut" class="events"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Export</h2>
+      <p class="hint">Master layers stay at full resolution. Pick the size you
+      want for the target and take a zip.</p>
+      <div class="row">
+        <label class="lbl">size
+          <select id="exportSize" class="sel small">
+            <option value="0">master</option>
+            <option value="1500">1500</option>
+            <option value="1000" selected>1000</option>
+            <option value="750">750</option>
+            <option value="512">512</option>
+          </select>
+        </label>
+        <button id="exportBtn" class="btn" type="button">Export folder (zip)</button>
+      </div>
+      <p id="exportOut" class="out"></p>
+    </section>
+
+    <section class="card">
+      <h2>Cut test (IoU)</h2>
+      <p class="hint">Load a machine-cut layer and compare it against the
+      hand-made one. IoU is the overlap of the two shapes: 1.00 is identical,
+      below about 0.85 the part will not line up.</p>
+      <div class="row">
+        <label class="lbl">truth
+          <select id="iouTruth" class="sel small"></select>
+        </label>
+        <label class="btn ghost file">
+          machine cut&hellip;
+          <input id="iouFile" type="file" accept="image/*" multiple hidden>
+        </label>
+      </div>
+      <table id="iouTable" class="iou"></table>
+    </section>
+
+    <section class="card">
+      <h2>JSON</h2>
+      <div class="row">
+        <button id="jsonBtn" class="btn" type="button">Show current</button>
+        <button id="jsonCopy" class="btn ghost" type="button">Copy</button>
+      </div>
+      <textarea id="jsonOut" class="json" spellcheck="false" rows="10"></textarea>
+    </section>
+
+  </aside>
+</div>
+
+<script src="../player/idle.js"></script>
+<script src="studio.js"></script>
+</body>
+</html>

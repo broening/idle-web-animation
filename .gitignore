@@ -1,0 +1,16 @@
+# Character art stays local. The tool is public, the figures are not.
+figures/
+
+# Working ledger of the build discipline, not part of the product.
+GATES.md
+
+# Claude Code working copies
+.claude/worktrees/
+
+# Operating system
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Editors
+*.swp

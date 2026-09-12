@@ -1,0 +1,61 @@
+/*
+ * idle.css - the whole layout contract for a figure.
+ *
+ * Chromium 103 is the floor, because that is what RedM and FiveM ship in
+ * their NUI layer. So: no :has(), no CSS nesting, no oklch(), no color-mix(),
+ * no container queries. Custom properties and transforms are fine.
+ */
+
+.idle-host {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The stage is always the figure's own pixel size. It is centred in the host
+ * and scaled to fit by the player, so one figure serves a 400 px card and a
+ * 1920 px loading screen from the same files. */
+.idle-stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.idle-layer,
+.idle-layer img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* The backdrop covers the whole host, independent of the figure canvas. */
+.idle-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: 50% 50%;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+/* Every layer is a full-canvas transparent image. No offsets, no cropping,
+ * no per-layer geometry to keep in sync - the pivot alone decides how it
+ * moves. That is why the JSON stays short enough to read. */
+.idle-layer {
+  transform-origin: 0 0;
+  will-change: transform, opacity, filter;
+  pointer-events: none;
+}
+
+.idle-layer img {
+  user-select: none;
+  -webkit-user-select: none;
+  display: block;
+}
