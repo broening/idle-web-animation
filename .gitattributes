@@ -1,1 +1,13 @@
+# Line endings stay exactly as they are on disk.
 * -text
+
+# ...but "-text" also makes git diff treat a file as binary, which turned a
+# whole commit of studio.js into "Bin 39025 -> 48710 bytes" and made it
+# unreviewable. Source stays diffable.
+*.js    diff
+*.mjs   diff
+*.css   diff
+*.html  diff
+*.json  diff
+*.md    diff
+*.py    diff
