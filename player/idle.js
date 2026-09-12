@@ -325,13 +325,6 @@
         if (fn) fn(lt, ms[j], L, env, out);
       }
 
-      /* Principle 11, solid drawing: layers displace by their own depth when
-       * the pointer moves, so a flat stack of images reads as a space. */
-      if (parallax && L.depth != null) {
-        out.tx += env.pointerX * parallax * num(L.depth, 0) * 26;
-        out.ty += env.pointerY * parallax * num(L.depth, 0) * 14;
-      }
-
       /* pivot was the one numeric field never passed through num(), so a
        * "pivot": [0.5] or a {x, y} object produced NaN in the translation
        * and the two renderers then disagreed completely: CSS threw the
@@ -343,9 +336,20 @@
       local[i] = matTRS(out.tx, out.ty, out.rot, out.sx, out.sy,
                         px * width, py * height);
 
+      /* Principle 11, solid drawing: layers displace by their own depth when
+       * the pointer moves, so a flat stack of images reads as a space.
+       *
+       * Deliberately NOT part of the local matrix. Parallax is a property of
+       * the camera, not of the joint, so a child must not inherit its
+       * parent's shift and then add its own on top. It used to: the eyes,
+       * riding the head, ended up 4.60 px off the face they are painted on at
+       * full pointer deflection - a mask sliding around. Now it is applied
+       * once, after the chain is composed. */
       state.push({
         id: L.id,
         index: i,
+        parallaxX: parallax ? env.pointerX * parallax * num(L.depth, 0) * 26 : 0,
+        parallaxY: parallax ? env.pointerY * parallax * num(L.depth, 0) * 14 : 0,
         parentIndex: (L.parent != null && idIndex[L.parent] !== undefined)
           ? idIndex[L.parent] : -1,
         /* Clamped here, not at the renderers. An opacity of -1 made the DOM
@@ -395,6 +399,8 @@
       for (j = 0; j < 6; j++) {
         if (!isFinite(m[j])) { m = matIdentity(); break; }
       }
+      m = [m[0], m[1], m[2], m[3],
+           m[4] + state[i].parallaxX, m[5] + state[i].parallaxY];
       state[i].matrix = m;
       state[i].css = matToCss(m);
       state[i].hidden = (state[i].role === 'eyesOpen' && blinkAt(i, 0) > 0.5);

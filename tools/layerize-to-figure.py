@@ -41,6 +41,60 @@ def alpha_box(path):
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
+def kind_of(name):
+    """The body part a layer name refers to, or None."""
+    n = (name or "").lower()
+    if "eye" in n:
+        return "eyes"
+    if "head" in n or "hair" in n or "face" in n:
+        return "head"
+    if "hand" in n or "finger" in n:
+        return "hand"
+    if "arm" in n or "sleeve" in n:
+        return "arm"
+    if "chest" in n or "shoulder" in n or "collar" in n or "torso" in n:
+        return "chest"
+    if "belly" in n or "lower" in n or "waist" in n or "leg" in n:
+        return "belly"
+    return None
+
+
+"""Who hangs off whom. Anatomy, not the order the model happened to return."""
+PARENT_OF = {
+    "eyes": "head",     # eyes ride the head - they may blink, never look elsewhere
+    "head": "chest",
+    "chest": "belly",
+    "arm": "chest",
+    "hand": "arm",
+    "belly": None,      # the root; the base plate stays independent
+}
+
+
+def link_parents(layers, by_kind):
+    """Wire the chain, and take away any motion a child must not have on its own.
+
+    Without this every layer floats free: the head turns and the eyes stay
+    behind, which reads as a mask sliding off a face. It is also what makes
+    follow-through work at all - a child reads time slightly later than its
+    parent, so a hand trails the arm that swings it.
+    """
+    by_id = {L["id"]: L for L in layers}
+    for kind, sid in by_kind.items():
+        parent_kind = PARENT_OF.get(kind)
+        pid = by_kind.get(parent_kind) if parent_kind else None
+        if pid and pid != sid:
+            by_id[sid]["parent"] = pid
+
+    # The eyes inherit the head's gaze through the chain. Giving them their own
+    # would let them drift away from the face they are painted on.
+    eyes = by_kind.get("eyes")
+    if eyes:
+        L = by_id[eyes]
+        L["motions"] = [m for m in L["motions"] if m["type"] != "gaze"]
+        if not L["motions"]:
+            L["motions"] = [{"type": "blink", "interval": 4.2, "duration": 0.13}]
+
+
 def rig_for(name, box, W, H):
     """Pivot and motions from what the model called the layer."""
     n = (name or "").lower()
@@ -106,6 +160,7 @@ def main(model, out_name):
 
     layers = []
     background = None
+    by_kind = {}
 
     for i, p in enumerate(placed):
         name = (meta[i].get("name") if i < len(meta) and isinstance(meta[i], dict) else None)
@@ -143,7 +198,10 @@ def main(model, out_name):
         if role:
             L["role"] = role
         layers.append(L)
+        by_kind.setdefault(kind_of(name), sid)
         print(f"  {sid:32} pivot {L['pivot']}  {motions[0]['type']}")
+
+    link_parents(layers, by_kind)
 
     fig = {
         "name": out_name,
