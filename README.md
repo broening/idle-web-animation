@@ -400,6 +400,6 @@ and to compare spacings; not a measurement instrument.
 
 ## Licence
 
-MIT for the code. The demo figure under `figures/pedro/` is by Dan Enso and
+MIT for the code. The demo figure under `figures/pedro/` is by Daniel Bröning and
 licensed CC BY 4.0, see `figures/pedro/LICENSE`. Any other character art
 under `figures/` is not part of the repository.
