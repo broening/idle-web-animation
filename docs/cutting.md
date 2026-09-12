@@ -85,3 +85,39 @@ through underneath the eyeball layer.
 - **A base plate that is opaque where the figure is not.** Behind a head is
   background. If the base is opaque there, the head moves and a black slab
   appears behind it.
+
+## The edit models redraw everything — measured
+
+`seedream/v5/pro/edit` is described as "region-precise, changes one element
+while keeping the rest of the frame intact". It does not. Asked to change only
+the eyes, on a 1472x1472 Vorlage:
+
+| | average change, of 255 |
+|---|---|
+| inside the eye region (1.5 % of the canvas) | 24.1 |
+| **everywhere else** | **6.5** |
+| pixels outside changed by more than 20 | **4.9 %** |
+
+Removing the head changed the far shoulder by 6.0; removing the hand as well
+took it to 8.0. That is not the prompt. A full-image diffusion editor
+re-encodes every pixel, and no wording stops it.
+
+**So do not paste its output in as a rectangle.** The 6.5 shift is invisible
+in the middle of a region and glaring at its border - that is exactly the seam
+that showed across the priest's face and under his eyes.
+
+Three rules follow:
+
+1. **Use the output as a mask, not as pixels**, wherever the Vorlage already
+   contains what you need. The pupils are found by differencing against "eyes
+   without pupils", but the pupil *pixels* are cut from the Vorlage.
+2. **Colour-match what you do have to take.** Measure the mean offset in a ring
+   around the region and subtract it. On the eye layers this was
+   R−11.3 G−11.9 B−16.6 — a visible step, removed by arithmetic.
+3. **Composite along the shape, never a box.** A dilation of the part's own
+   mask; a rectangle puts a straight edge where the two versions disagree.
+
+A mask-based inpainter (`flux-pro/v1/fill`, `bria/eraser`) is the structural
+answer: it writes only inside the mask, so the rest of the image is
+byte-identical by construction. Worth preferring wherever the edit is
+surgical rather than creative.
