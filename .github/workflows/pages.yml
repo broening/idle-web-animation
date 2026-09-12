@@ -1,0 +1,44 @@
+name: pages
+
+# Publishes the site (the live demo, and the read-only studio) to GitHub Pages.
+# The studio finds figures through figures/index.json; that file is gitignored,
+# because locally it lists private figures. So it is generated here from the
+# figures actually in the repo - only Pedro - and the studio on Pages shows
+# exactly those. Nothing is committed back; the file lives only in the artifact.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: figure index for the demo (public figures only)
+        run: |
+          python3 -c "import json,os; root='figures'; names=sorted(d for d in os.listdir(root) if os.path.isfile(os.path.join(root,d,'figure.json'))); open(os.path.join(root,'index.json'),'w').write(json.dumps(names)); print('index.json =', names)"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
