@@ -69,6 +69,10 @@ def main(model):
     d = TEST / model
     resp = json.loads((d / "_response.json").read_text(encoding="utf-8"))
     layers = resp.get("layers") or []
+    # kie wraps its result in a JSON string inside the response; the collector
+    # unpacks it to _layers.json. Same fields as fal, different envelope.
+    if not layers and (d / "_layers.json").exists():
+        layers = json.loads((d / "_layers.json").read_text(encoding="utf-8"))
     if not layers:
         # Qwen returns a flat `images` list: no bounding box, no name, no
         # z_index. The images are full-canvas, so placement is just a resize -
@@ -89,9 +93,11 @@ def main(model):
     coverage = np.zeros((H, W), dtype=np.int16)
 
     for i, L in enumerate(layers):
-        f = d / f"layer_{i:02d}.png"
-        if not f.exists():
+        cands = sorted(d.glob(f"layer_{i:02d}.*"))
+        cands = [c for c in cands if c.suffix.lower() in (".png", ".webp", ".jpg", ".jpeg")]
+        if not cands:
             continue
+        f = cands[0]
         im = Image.open(f).convert("RGBA")
         bb = (L.get("bounding_box") or {}).get("absolute")
         name = L.get("name") or ("base" if i == 0 else f"layer {i}")

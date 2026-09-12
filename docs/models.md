@@ -53,30 +53,60 @@ metadata is worth as much as the pixels: it maps straight onto `figure.json`.
 Qwen decomposed almost nothing and tells you nothing about what it did return.
 Its `seed` is still the only reproducibility any of them offers.
 
-### kie.ai cannot fetch images from Western hosts
+### kie.ai needs its own upload — and bills more than it lists
 
-The kie job failed before the model ran, and a second test settled why.
+The first two kie attempts failed before the model ran, and the reason was the
+network, not the model:
 
 | Source given to kie | What kie's server reported |
 |---|---|
-| `v3b.fal.media` (fal's CDN) | TLS verification failed — the certificate it got names `cd8ukg94e1omtfb44s2k0.vke.cn-beijing.volces.com` and `kubernetes.default.svc.cluster.local` |
+| `v3b.fal.media` (fal's CDN) | TLS verification failed — the certificate names `cd8ukg94e1omtfb44s2k0.vke.cn-beijing.volces.com` and `kubernetes.default.svc.cluster.local` |
 | `upload.wikimedia.org` | `Timeout while downloading` |
 
 `volces.com` is Volcano Engine, ByteDance's cloud; `cn-beijing` is its Beijing
-region. So kie's image fetcher runs inside mainland China: the fal request was
-intercepted and answered by a local cluster's own certificate, and Wikimedia —
-blocked in China — simply timed out.
+region. kie's image fetcher runs inside mainland China: the fal request was
+answered by a local cluster's own certificate, and Wikimedia — blocked there —
+timed out. Both hosts answer normally from here.
 
-Both hosts answer normally from here (Wikimedia 301 in 0.17 s, fal serves the
-file with a valid Sectigo certificate for `v3.fal.media`, verified). Nothing is
-wrong with the image, its origin, the certificate or the model.
+**The fix is kie's own file API, not a different host.** That is exactly what
+their Playground does when you drop a file into the form:
 
-**Consequence for this project: kie.ai is not usable for any job that takes an
-image URL**, unless the source is hosted somewhere reachable from mainland
-China. Text-only jobs are unaffected. kie does not bill a failed task — the
-balance stayed at 792 across both attempts.
+```bash
+curl -X POST https://kieai.redpandaai.co/api/file-stream-upload   -H "Authorization: Bearer $KIE_AI_API_KEY"   -F file=@source.png -F uploadPath=images/xy -F fileName=source.png
+# -> data.downloadUrl on tempfile.redpandaai.co, kept for three days, free
+```
 
-That removes the price comparison from the decision entirely. fal it is.
+`tools/kie-upload.py` does this. Two traps in their docs: one page gives the
+host as `api.kie.ai`, which returns **404** — the working host is
+`kieai.redpandaai.co`. And the result files sit on `tempfile.aiquickdraw.com`,
+which refuses Python's default user agent with **403**; fetch them with curl.
+
+With the upload in place the job ran and matched fal, as it should — same
+model:
+
+| | fal seedream | kie seedream |
+|---|---|---|
+| colour distance | 9.2 / 255 | **7.3 / 255** |
+| double-covered | 6.5 % | **4.4 %** |
+| figure covered by no part | 21.2 % | **11.1 %** |
+| mean IoU vs the hand rig | 0.473 | **0.484** |
+
+That gap is run-to-run variation of one model, not a provider difference.
+
+**The price is not the listed one.** kie lists `$0.0375 per image`. Measured:
+the balance went from 792 to 708 credits, so **84 credits = $0.42** for one
+run — eleven times the list price. The job returned seven images (base plus six
+layers), so it is probably billed per output image rather than per call. That
+is not confirmed; the difference is. Check the balance before and after the
+first run of any new kie model rather than trusting the price page:
+
+```bash
+curl -H "Authorization: Bearer $KIE_AI_API_KEY" https://api.kie.ai/api/v1/chat/credit
+```
+
+**Verdict: use fal.** Not on quality — the model is identical — but because
+fal needs no upload hop, has no China routing in the path, and its listed
+prices have not been caught misreporting by an order of magnitude.
 
 **What the ground-truth comparison actually measures.** IoU against the
 hand-made priest gave head 0.873, hand 0.560, chest 0.556, belly 0.493, eyes
