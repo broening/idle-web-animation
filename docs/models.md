@@ -53,11 +53,30 @@ metadata is worth as much as the pixels: it maps straight onto `figure.json`.
 Qwen decomposed almost nothing and tells you nothing about what it did return.
 Its `seed` is still the only reproducibility any of them offers.
 
-The kie job failed before the model ran: kie's servers could not fetch the
-image because fal's CDN host `v3b.fal.media` serves a certificate issued for a
-Kubernetes cluster. Nothing to do with the model, and kie does not bill a
-failed task — the balance was unchanged. To retry it, the source needs a host
-with a valid certificate.
+### kie.ai cannot fetch images from Western hosts
+
+The kie job failed before the model ran, and a second test settled why.
+
+| Source given to kie | What kie's server reported |
+|---|---|
+| `v3b.fal.media` (fal's CDN) | TLS verification failed — the certificate it got names `cd8ukg94e1omtfb44s2k0.vke.cn-beijing.volces.com` and `kubernetes.default.svc.cluster.local` |
+| `upload.wikimedia.org` | `Timeout while downloading` |
+
+`volces.com` is Volcano Engine, ByteDance's cloud; `cn-beijing` is its Beijing
+region. So kie's image fetcher runs inside mainland China: the fal request was
+intercepted and answered by a local cluster's own certificate, and Wikimedia —
+blocked in China — simply timed out.
+
+Both hosts answer normally from here (Wikimedia 301 in 0.17 s, fal serves the
+file with a valid Sectigo certificate for `v3.fal.media`, verified). Nothing is
+wrong with the image, its origin, the certificate or the model.
+
+**Consequence for this project: kie.ai is not usable for any job that takes an
+image URL**, unless the source is hosted somewhere reachable from mainland
+China. Text-only jobs are unaffected. kie does not bill a failed task — the
+balance stayed at 792 across both attempts.
+
+That removes the price comparison from the decision entirely. fal it is.
 
 **What the ground-truth comparison actually measures.** IoU against the
 hand-made priest gave head 0.873, hand 0.560, chest 0.556, belly 0.493, eyes
