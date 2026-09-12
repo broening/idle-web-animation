@@ -119,7 +119,7 @@ const motionsBlock = engine.slice(engine.indexOf('var MOTIONS = {'), engine.inde
 const paramsBlock = studio.slice(studio.indexOf('var MOTION_PARAMS = {'),
                                  studio.indexOf('function buildMotionControls'));
 
-for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow']) {
+for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow', 'charge']) {
   const i = motionsBlock.indexOf(name + ': function');
   if (i < 0) fail(`Baustein ${name} fehlt im Motor`);
   const body = motionsBlock.slice(i, motionsBlock.indexOf('},', i));

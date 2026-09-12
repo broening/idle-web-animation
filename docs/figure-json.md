@@ -71,6 +71,7 @@ round, the way a layer palette does.
 { "type": "gaze",     "strength": 1.0, "pixels": 9, "degrees": 1.4, "follow": 1, "period": 11.3 }
 { "type": "flipbook", "mode": "burst", "fps": 12, "every": 6.5, "jitter": 0.45 }
 { "type": "glow",     "strength": 1.0, "period": 5.3, "min": 0.55, "brightness": 0.22 }
+{ "type": "charge",   "stages": 3, "cycle": 24, "hold": 1.0, "ramp": 0.35, "showFrom": 1 }
 ```
 
 - **breathe** — scales up and narrows at once, and lifts slightly.
@@ -85,8 +86,30 @@ round, the way a layer palette does.
   two effects never fire in lockstep. Between bursts the layer is hidden.
 - **glow** — pulses opacity down to `min` and brightness up by `brightness`.
 
+- **charge** — a slow build-up that fires in stages, each stronger than the
+  last. One `cycle` is split into `stages` equal slots; in slot *n* the layer
+  ramps up over `ramp`, holds for `hold`, ramps down again, and reaches *n /
+  stages* of full strength. A layer joins from `showFrom` upwards, so three
+  bolt images with `showFrom` 1, 2 and 3 become three visible steps of one
+  discharge rather than a single flash. Between flashes the layer is hidden.
+
 Several motions can sit on one layer; they add up. A hand can `sway` and
 `glow` at the same time.
+
+## Blinking properly
+
+`role: "eyesOpen"` hides a layer while the lid is down. That alone leaves a
+hole where an eye should be. Give the figure both roles:
+
+| Layer | role | what it is |
+|---|---|---|
+| eyeball | – | the white and iris, cut from the source. Never moves on its own. |
+| pupil | – | a child of the eyeball with a small `gaze`. Only this follows the pointer. |
+| lids closed | `eyesClosed` | shown **only** while blinking. Has to be drawn or generated - a source with open eyes does not contain it. |
+| lids open | `eyesOpen` | hidden while blinking. |
+
+The head carries the head's own motion; the eyes ride it through `parent` and
+must not have a `gaze` of their own, or they drift off the face.
 
 ## Blend modes, and why effects are cheap
 

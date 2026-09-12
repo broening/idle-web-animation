@@ -209,6 +209,53 @@
       }
     },
 
+    /* A slow charge that fires in stages, each stronger than the last.
+     *
+     * One cycle is divided into `stages` equal slots. In each slot the effect
+     * ramps up, holds, and ramps down again; slot n reaches n/stages of full
+     * strength, so the build-up is visible rather than a single flash. A
+     * layer only takes part from `showFrom` upwards, which is how three
+     * separate bolt images become three steps of one discharge.
+     *
+     * The shape is taken from the loading screen this project came from,
+     * which drove the same effect by hand with handBlitzStufen. */
+    charge: function (t, cfg, layer, env, out) {
+      var stages = Math.max(1, Math.round(num(cfg.stages, 3)));
+      var cycle = pos(cfg.cycle, 24);
+      var hold = pos(cfg.hold, 1.0);
+      var ramp = pos(cfg.ramp, 0.35);
+      var showFrom = Math.max(1, Math.round(num(cfg.showFrom, 1)));
+
+      var slot = cycle / stages;
+      var tt = t - Math.floor(t / cycle) * cycle;
+      var idx = Math.floor(tt / slot);                 /* 0-based slot */
+      var stage = idx + 1;                             /* 1..stages */
+      /* The flash sits at the end of its slot, so the quiet build-up is what
+       * fills most of the time. */
+      var start = (idx + 1) * slot - hold - ramp * 2;
+      var dt = tt - start;
+      var span = hold + ramp * 2;
+
+      var level = 0;
+      if (dt >= 0 && dt < span && stage >= showFrom) {
+        if (dt < ramp) level = dt / ramp;
+        else if (dt < ramp + hold) level = 1;
+        else level = 1 - (dt - ramp - hold) / ramp;
+        level *= stage / stages;                       /* the gradation */
+      }
+
+      out.charge = Math.max(out.charge, level);
+      if (level <= 0) {
+        out.frame = -1;                                /* nothing to show */
+      } else {
+        out.opacity *= level;
+        out.brightness += level * num(cfg.brightness, 0.6);
+        /* A trace of scale so a bolt does not look pasted on. */
+        out.sx += level * num(cfg.grow, 0.02);
+        out.sy += level * num(cfg.grow, 0.02);
+      }
+    },
+
     /* Light that lives: a lantern, a rune, an eye. Brightness and opacity
      * breathe on a period of their own, so it never locks to the chest. */
     glow: function (t, cfg, layer, env, out) {
@@ -316,7 +363,7 @@
 
       var out = {
         tx: 0, ty: 0, rot: 0, sx: 1, sy: 1,
-        opacity: num(L.opacity, 1), brightness: 0, blink: 0, frame: -2
+        opacity: num(L.opacity, 1), brightness: 0, blink: 0, charge: 0, frame: -2
       };
 
       var ms = L.motions || [];
@@ -358,6 +405,7 @@
         opacity: clamp(num(out.opacity, 1), 0, 1),
         brightness: out.brightness,
         blink: out.blink,
+        charge: out.charge,
         frame: out.frame,
         role: L.role
       });
@@ -403,7 +451,12 @@
            m[4] + state[i].parallaxX, m[5] + state[i].parallaxY];
       state[i].matrix = m;
       state[i].css = matToCss(m);
-      state[i].hidden = (state[i].role === 'eyesOpen' && blinkAt(i, 0) > 0.5);
+      var bl = blinkAt(i, 0);
+      /* eyesOpen disappears while the lid is down; eyesClosed appears only
+       * then. Hiding the open eyes without showing closed ones leaves a hole
+       * where an eye should be, which is not a blink. */
+      state[i].hidden = (state[i].role === 'eyesOpen' && bl > 0.5) ||
+                        (state[i].role === 'eyesClosed' && bl <= 0.5);
     }
 
     return state;

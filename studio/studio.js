@@ -217,7 +217,13 @@
     brightness: [0, 2, 0.01],
     parallax:   [0, 2, 0.01],
     depth:      [0, 1, 0.01],
-    lag:        [0, 1, 0.005]
+    lag:        [0, 1, 0.005],
+    stages:     [1, 6, 1],
+    cycle:      [2, 60, 0.5],
+    hold:       [0.05, 4, 0.05],
+    ramp:       [0.05, 3, 0.05],
+    showFrom:   [1, 6, 1],
+    grow:       [0, 0.3, 0.005]
   };
 
   function slider(label, value, onChange, key) {
@@ -264,7 +270,9 @@
     blink:    { interval: 4.2, duration: 0.13 },
     gaze:     { strength: 1, pixels: 9, degrees: 1.4, follow: 1, period: 11.3 },
     flipbook: { fps: 12, every: 6.5, jitter: 0.45 },
-    glow:     { strength: 1, period: 5.3, min: 0.55, brightness: 0.22, phase: 0 }
+    glow:     { strength: 1, period: 5.3, min: 0.55, brightness: 0.22, phase: 0 },
+    charge:   { stages: 3, cycle: 24, hold: 1.0, ramp: 0.35, showFrom: 1,
+                brightness: 0.6, grow: 0.02 }
   };
 
   function buildMotionControls() {
