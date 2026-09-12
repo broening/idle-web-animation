@@ -52,6 +52,7 @@ keyframes.
 | `depth` | 0…1, back to front. Drives parallax only. |
 | `lag` | Extra seconds of delay on top of the chain lag. |
 | `role` | `"eyesOpen"` marks the layer that a `blink` hides. |
+| `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |
 
 Layers are listed **back to front**. The studio shows them the other way
 round, the way a layer palette does.
@@ -81,6 +82,23 @@ round, the way a layer palette does.
 
 Several motions can sit on one layer; they add up. A hand can `sway` and
 `glow` at the same time.
+
+## Blend modes, and why effects are cheap
+
+An effect flip-book is cheapest to produce as a two second video on a **black**
+field, cut into frames with ffmpeg — see `models.md`. Black disappears under
+`"blend": "screen"`, so those frames need no alpha channel and no background
+removal pass at all.
+
+```json
+{ "id": "lightning", "blend": "screen",
+  "frames": ["fx/bolt-1.webp", "fx/bolt-2.webp", "fx/bolt-3.webp"],
+  "motions": [{ "type": "flipbook", "mode": "burst", "fps": 12, "every": 6.5 }] }
+```
+
+`multiply` is the counterpart for shadows and grime on a white field. Any CSS
+blend mode works; the canvas renderer uses the same names, so what the contact
+sheet shows is what the page shows.
 
 ## Two rules that save time
 

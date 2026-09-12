@@ -335,6 +335,12 @@
       box.className = 'idle-layer';
       box.setAttribute('data-id', L.id);
 
+      /* Lightning, fire and smoke are cheapest to produce as a short video on
+       * a black field, cut into frames. Black composites away under "screen",
+       * so the effect needs no alpha channel and no background removal pass.
+       * mix-blend-mode has been in Chrome since 41, well under our floor. */
+      if (L.blend) box.style.mixBlendMode = L.blend;
+
       var imgs = [];
       var srcs = (L.frames && L.frames.length) ? L.frames : [L.src];
       for (var k = 0; k < srcs.length; k++) {
@@ -519,6 +525,9 @@
       var m = s2.matrix;
       g.save();
       g.globalAlpha = s2.opacity;
+      /* Canvas uses the same names as mix-blend-mode, so the contact sheet
+       * shows what the page shows. */
+      g.globalCompositeOperation = L.blend || 'source-over';
       if (s2.brightness > 0.001 && 'filter' in g) {
         g.filter = 'brightness(' + (1 + s2.brightness).toFixed(3) + ')';
       }
