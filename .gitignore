@@ -1,5 +1,10 @@
-# Character art stays local. The tool is public, the figures are not.
-figures/
+# Character art stays local. The tool is public, the figures are not -
+# except Pedro, the demo figure (CC BY 4.0, see figures/pedro/LICENSE).
+figures/*
+!figures/pedro/
+# Working material next to the demo that nothing in figure.json points at.
+figures/pedro/layers/Pedro-smoke.mp4
+figures/pedro/layers/background-2.webp
 
 # Working ledger of the build discipline, not part of the product.
 GATES.md

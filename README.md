@@ -54,7 +54,8 @@ tools/
   test-determinism.mjs  proves solve() is a pure function of time
   test-agreement.mjs    proves the DOM and canvas renderers agree
   check-compat.py       refuses anything newer than Chromium 103
-figures/                the art. Not in git.
+figures/pedro/          the demo figure, CC BY 4.0. Your own figures live
+                        beside it and stay out of git.
 docs/
   figure-json.md        the schema
   principles.md         which Disney principle lives where, and which does not
@@ -66,6 +67,10 @@ docs/
 ```bash
 python tools/serve.py
 ```
+
+The server needs nothing but Python. The tools under `tools/` that touch
+pixels need Pillow and numpy (`pip install -r requirements.txt`), and the
+tests need Node.
 
 Then open <http://localhost:5173/studio/>. `.claude/launch.json` starts the
 same server from Claude Code.
@@ -335,5 +340,6 @@ and to compare spacings; not a measurement instrument.
 
 ## Licence
 
-MIT. The character art under `figures/` is not part of it and is not in this
-repository.
+MIT for the code. The demo figure under `figures/pedro/` is by Dan Enso and
+licensed CC BY 4.0, see `figures/pedro/LICENSE`. Any other character art
+under `figures/` is not part of the repository.

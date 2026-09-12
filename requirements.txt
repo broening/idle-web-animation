@@ -1,0 +1,4 @@
+# For the Python tools under tools/. serve.py itself needs nothing beyond the
+# standard library.
+Pillow>=10
+numpy>=1.26
