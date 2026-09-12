@@ -555,6 +555,8 @@
 
   var SHEET_COLS = 6, SHEET_ROWS = 4, SHEET_CELL = 260;
   var CHECKER_A = '#14171b', CHECKER_B = '#191c21', CHECKER_CELL = 10;
+  var SEAM_COLORS = ['#4a4a4a', '#e06c75', '#6fcf7f', '#6ea8fe', '#e0a458',
+                     '#c678dd', '#56b6c2', '#d19a66', '#98c379', '#be5046'];
 
   function buildSheet() {
     if (!state.images) return;
@@ -1212,6 +1214,43 @@
     });
 
     $('showPivots').addEventListener('change', drawOverlay);
+
+    /* Layer edges: paint every layer in a flat colour. A part cut to its own
+     * shape looks like the thing it is; a part cut to a bounding box looks
+     * like a rectangle, and a rectangle's straight edge is what shows as a
+     * seam once it moves. Measured on the priest: the chest layer's box edge
+     * deviates 8.4 of 255 from the original against 3.0 twenty pixels
+     * inside it. */
+    $('showSeams').addEventListener('change', function () {
+      var on = this.checked;
+      var boxes = document.querySelectorAll('.idle-layer');
+      for (var i = 0; i < boxes.length; i++) {
+        var box = boxes[i];
+        var im = box.getElementsByTagName('img');
+        var visible = null;
+        for (var k = 0; k < im.length; k++) {
+          if (im[k].style.display !== 'none') visible = im[k];
+          im[k].style.visibility = on ? 'hidden' : '';
+        }
+        if (on && visible) {
+          /* The image itself becomes a mask over a flat colour, so what you
+           * see is the exact silhouette the cut produced - nothing else. */
+          var url = 'url("' + visible.getAttribute('src') + '")';
+          box.style.backgroundColor = SEAM_COLORS[i % SEAM_COLORS.length];
+          box.style.webkitMaskImage = url;
+          box.style.maskImage = url;
+          box.style.webkitMaskSize = '100% 100%';
+          box.style.maskSize = '100% 100%';
+          /* Deliberately not opacity: render() rewrites that every frame from
+           * the solved state, so anything set here is gone within 16 ms. */
+        } else {
+          box.style.backgroundColor = '';
+          box.style.webkitMaskImage = '';
+          box.style.maskImage = '';
+        }
+      }
+    });
+
 
     (function () {
       var sws = document.querySelectorAll('.swatches .sw[data-bg]');

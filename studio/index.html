@@ -23,6 +23,7 @@
       <output id="timeOut" class="time">0.00 s</output>
       <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
       <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
+      <label class="chk"><input id="showSeams" type="checkbox"> layer edges</label>
 
       <span class="swatches" role="group" aria-label="stage background">
         <button class="sw sw-alpha on" type="button" data-bg="" title="transparent"></button>
@@ -69,9 +70,10 @@
         <button id="eventsBtn" class="btn ghost" type="button">Events</button>
       </div>
       <canvas id="sheet" class="sheet"></canvas>
-      <p class="hint mt">A blink lasts about 70 ms and the sheet samples every
-      330 ms, so the sheet misses most of them. Events scans 30 seconds at 60
-      frames and lists what actually fires.</p>
+      <p class="hint mt">A blink holds the eye closed for 86 ms and the sheet
+      samples every 333 ms, so it catches about one in four - and on a figure
+      whose blinks never land on that grid, none at all. Events scans 30
+      seconds at 60 frames and lists what actually fires.</p>
       <pre id="eventsOut" class="events"></pre>
     </section>
 
