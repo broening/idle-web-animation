@@ -86,7 +86,11 @@
       <p class="hint">Load a machine-cut layer and compare it against the
       hand-made one. IoU is the overlap of the two shapes: 1.00 is identical,
       below about 0.85 the part will not line up.</p>
+      <p class="hint">The layerize models name their own output, so a filename
+      rarely matches. Auto-match compares each file against every truth layer
+      and keeps the best, and flags a win that was too close to call.</p>
       <div class="row">
+        <label class="chk"><input id="iouAuto" type="checkbox" checked> auto-match</label>
         <label class="lbl">truth
           <select id="iouTruth" class="sel small"></select>
         </label>

@@ -740,41 +740,85 @@
     });
   }
 
+  /* Every image file the figure references, once. */
+  function truthPaths() {
+    var layers = state.figure.layers || [];
+    var seen = {}, out = [];
+    for (var i = 0; i < layers.length; i++) {
+      var srcs = (layers[i].frames && layers[i].frames.length)
+        ? layers[i].frames : [layers[i].src];
+      for (var k = 0; k < srcs.length; k++) {
+        if (srcs[k] && !seen[srcs[k]]) { seen[srcs[k]] = 1; out.push(srcs[k]); }
+      }
+    }
+    return out;
+  }
+
   function runIou(fileList) {
     var table = $('iouTable');
     table.innerHTML = '';
     var base = FIGURES_ROOT + state.name + '/';
     var chosen = $('iouTruth').value;
+    var auto = $('iouAuto').checked;
     var SIZE = 512;   /* plenty for a shape comparison, and fast */
 
     var rows = [];
-    var jobs = [];
+    var all = truthPaths();
 
+    /* Load every truth mask once. With auto-match each uploaded file is
+     * compared against all of them, so caching turns an N x M problem back
+     * into N + M loads. */
+    var truthMasks = Promise.all(all.map(function (p) {
+      return loadImg(base + p).then(function (im) {
+        return { path: p, mask: alphaMask(im, SIZE) };
+      }).catch(function () { return null; });
+    })).then(function (list) { return list.filter(Boolean); });
+
+    var jobs = [];
     for (var i = 0; i < fileList.length; i++) {
       (function (file) {
-        /* Match by filename against a layer file, fall back to the picked one. */
+        /* Match by filename when it lines up. The layerize models name their
+         * own output, so that usually fails - then auto-match wins, or the
+         * dropdown decides. */
         var stem = file.name.replace(/\.[^.]+$/, '').toLowerCase();
-        var truthPath = chosen;
-        var layers = state.figure.layers || [];
-        for (var j = 0; j < layers.length; j++) {
-          var srcs = (layers[j].frames && layers[j].frames.length)
-            ? layers[j].frames : [layers[j].src];
-          for (var k = 0; k < srcs.length; k++) {
-            if (!srcs[k]) continue;
-            var ls = srcs[k].replace(/^layers\//, '').replace(/\.[^.]+$/, '').toLowerCase();
-            if (ls === stem) truthPath = srcs[k];
-          }
+        var named = null;
+        for (var j = 0; j < all.length; j++) {
+          var ls = all[j].replace(/^layers\//, '').replace(/\.[^.]+$/, '').toLowerCase();
+          if (ls === stem) named = all[j];
         }
 
         var url = URL.createObjectURL(file);
-        jobs.push(Promise.all([loadImg(url), loadImg(base + truthPath)])
+        jobs.push(Promise.all([loadImg(url), truthMasks])
           .then(function (pair) {
-            var v = iou(alphaMask(pair[0], SIZE), alphaMask(pair[1], SIZE));
-            rows.push({ name: file.name, truth: truthPath, v: v });
+            var mine = alphaMask(pair[0], SIZE);
+            var masks = pair[1];
             URL.revokeObjectURL(url);
+
+            if (!auto && (named || chosen)) {
+              var want = named || chosen;
+              for (var m = 0; m < masks.length; m++) {
+                if (masks[m].path === want) {
+                  rows.push({ name: file.name, truth: want, v: iou(mine, masks[m].mask) });
+                  return;
+                }
+              }
+            }
+            /* Auto: try every truth layer, keep the best. */
+            var best = null, bestV = -1, second = -1;
+            for (var n = 0; n < masks.length; n++) {
+              var v = iou(mine, masks[n].mask);
+              if (v > bestV) { second = bestV; bestV = v; best = masks[n].path; }
+              else if (v > second) { second = v; }
+            }
+            rows.push({
+              name: file.name,
+              truth: best || '-',
+              v: bestV < 0 ? NaN : bestV,
+              margin: second >= 0 ? bestV - second : null
+            });
           })
           .catch(function () {
-            rows.push({ name: file.name, truth: truthPath, v: NaN });
+            rows.push({ name: file.name, truth: named || chosen, v: NaN });
           }));
       })(fileList[i]);
     }
@@ -788,7 +832,11 @@
         var c1 = document.createElement('td');
         c1.textContent = r.name;
         var c2 = document.createElement('td');
-        c2.textContent = r.truth.replace(/^layers\//, '');
+        /* The margin over the runner-up says whether the match is decided or
+         * a coin toss. A part that scores 0.71 against two different truth
+         * layers has not really been identified. */
+        c2.textContent = r.truth.replace(/^layers\//, '') +
+          (r.margin != null && r.margin < 0.15 ? '  (+' + r.margin.toFixed(2) + ' unsicher)' : '');
         c2.style.color = '#98a1ad';
         var c3 = document.createElement('td');
         if (isNaN(r.v)) {
