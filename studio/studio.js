@@ -1275,6 +1275,13 @@
     drawOverlay();
   }
 
+  function panBy(dx, dy) {
+    view.panX += dx;
+    view.panY += dy;
+    applyView();
+    drawOverlay();
+  }
+
   function resetView() {
     view.zoom = 1;
     view.panX = 0;
@@ -1472,15 +1479,33 @@
 
     /* passive: false, or the browser scrolls the page and ignores the
      * preventDefault. A trackpad pinch arrives here as a wheel event with
-     * ctrlKey set and a larger delta, which the same line handles. */
+     * ctrlKey set and a larger delta, which the zoom line handles as it is. */
     c.addEventListener('wheel', function (e) {
       if (!state.figure) return;
       e.preventDefault();
+
+      /* A tilt wheel, a thumb wheel or a sideways trackpad swipe all arrive
+       * as deltaX. Shift turns the main wheel sideways for hardware that has
+       * only the one. */
+      var dx = e.shiftKey ? (e.deltaX || e.deltaY) : e.deltaX;
+      var dy = e.shiftKey ? 0 : e.deltaY;
+
+      /* One event can carry both, and a trackpad diagonal carries both every
+       * time. The larger one wins, or the figure zooms and slides at once
+       * and neither move is the one that was asked for. */
+      if (Math.abs(dx) > Math.abs(dy)) {
+        /* In screen pixels, like the drag, and against the wheel: pushing
+         * the view right is what moves the figure left. */
+        panBy(-dx, 0);
+        return;
+      }
+
+      if (!dy) return;
       var p = pos(e);
       /* Multiplicative, so a notch is worth the same fraction at every
        * zoom. Adding a constant makes the far end crawl and the near end
        * jump. */
-      zoomAt(view.zoom * Math.exp(-e.deltaY * 0.0015), p[0], p[1]);
+      zoomAt(view.zoom * Math.exp(-dy * 0.0015), p[0], p[1]);
     }, { passive: false });
 
     window.addEventListener('mousemove', function (e) {

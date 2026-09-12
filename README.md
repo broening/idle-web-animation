@@ -134,9 +134,10 @@ can be dragged wider by the line beside them (arrow keys work too), and the
 button between them trades their sides for anyone who reads a rig the other
 way round. The widths are remembered per browser, not in `figure.json`.
 
-On the stage itself the wheel zooms towards the pointer, dragging anywhere
-that is not a pivot dot pushes the figure about, and **Fit** or a double-click
-puts it back. That view is a magnifying glass and nothing else: it is not
+On the stage itself the wheel zooms towards the pointer, a second or tilt
+wheel slides sideways (`Shift` and the main wheel do the same), dragging
+anywhere that is not a pivot dot pushes the figure about, and **Fit** or a
+double-click puts it back. That view is a magnifying glass and nothing else: it is not
 saved, and the contact sheet, the events scan and the export all render from
 the figure data at their own fixed size.
 
