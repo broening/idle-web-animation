@@ -3,10 +3,16 @@
 Prices read live from fal.ai `get_pricing` on 29.08.2026. Reverify before
 quoting — they move.
 
-**Read the `unit` field, not just the number.** `google/nano-banana-lite/edit`
-reports `unit_price: 1, unit: "units"`, which is not one dollar per image; it
-is a placeholder. A price whose unit is `compute seconds` is not comparable to
-one per `image` until you know the runtime. Both traps are marked below.
+**Read the `unit` field, not just the number.** Two traps, and rows below are
+marked **?** or **T** where they apply:
+
+- **? placeholder.** `google/nano-banana-lite/edit` reports
+  `unit_price: 1, unit: "units"`. That is not one dollar per image, it is a
+  value nobody filled in. Do not build a cost model on it.
+- **T runtime unknown.** A price per `compute second` cannot be compared with
+  one per `image` until the runtime is measured. Every T figure in this file
+  is an **estimate**, not a measurement, and is labelled as such where it is
+  used.
 
 This project has six jobs, not one. The first sweep only looked for job 1 and
 searched the word "segmentation", which found the wrong family of models
@@ -22,7 +28,7 @@ sits behind an arm is already reconstructed.
 
 | Model | Provider | Price | Notes |
 |---|---|---|---|
-| `bytedance/seedream/v5/pro/layerize` | fal | $0.00017 / compute second | `prompt` names which elements to separate, and accepts `<bbox>left top right bottom</bbox>` for precise targeting. Returns base image + up to 16 layers ordered by z_index. **Best fit: it takes the rig plan as its prompt.** |
+| `bytedance/seedream/v5/pro/layerize` | fal | **T** $0.00017 / compute second | `prompt` names which elements to separate, and accepts `<bbox>left top right bottom</bbox>` for precise targeting. Returns base image + up to 16 layers ordered by z_index. **Best fit on capability** — the only one that takes the rig plan as its prompt. **Not established as cheapest:** against kie's $0.0375 flat it only wins below **220 compute seconds**, and nobody has measured the runtime. |
 | `seedream/5-pro-layer-decomposition` | kie | $0.0375 / image | Same model, flat price instead of runtime. Also returns per-layer name, bbox and description. |
 | `fal-ai/qwen-image-layered` | fal | $0.05 / image | `num_layers` is explicit (default 4) and it has a **`seed`**, so a run is repeatable. No prompt steering. |
 
@@ -57,7 +63,7 @@ slightly for a real three-quarter gaze instead of a fake 2D one.
 | `fal-ai/kling-image/o3/image-to-image` | fal | see `get_pricing` | Advertised for consistency across edits. |
 | `bytedance/seedream/v5/lite/edit` | fal | $0.035 / image | Cheap general edit. |
 | `fal-ai/bytedance/seedream/v4.5/edit` | fal | $0.04 / image | Older sibling, no reason to prefer it over v5 lite. |
-| `xai/grok-imagine-image/v2.0/edit` | fal | $0.00017 / compute second | Same model as kie's `grok-imagine-image-2-0/image-edit`. |
+| `xai/grok-imagine-image/v2.0/edit` | fal | **T** $0.00017 / compute second | Same model as kie's `grok-imagine-image-2-0/image-edit`. |
 
 **Verdict:** multiple-angles is worth a real test. If it holds the painted
 style, the `gaze` block stops being a 2D cheat and becomes a two-pose blend.
@@ -74,11 +80,13 @@ Generate a short video and cut it into frames:
 | 2 second clip from a still | `fal-ai/kling-video/v2.5-turbo/standard/image-to-video` | $0.042 / second = **$0.084** |
 | alternative | `wan/v2.6/image-to-video/flash` | $0.05 / second |
 | cut into frames | local `ffmpeg 6.0` | free |
-| optional, per frame | `fal-ai/birefnet/v2` | $0.0008 / compute second |
+| optional, per frame | `fal-ai/birefnet/v2` | **T** $0.0008 / compute second |
 
-A 2 second clip at 24 fps is 48 frames; a flip-book needs 4 to 8. That is
-roughly **$0.011 per usable frame, and they are temporally coherent** —
-against $0.035 to $0.08 per frame for separate image generations that are not.
+A 2 second clip at 24 fps is 48 frames; a flip-book needs 4 to 8. So one clip
+costs **$0.021 per frame if you keep 4, $0.011 if you keep 8** — against
+$0.035 to $0.08 per frame for separate image generations. The saving holds at
+either end, and the frames are temporally coherent, which separate
+generations are not at any price.
 
 **Transparency is free if the effect is generated on black.** Lightning, fire
 and smoke on a black field composite correctly with
@@ -89,7 +97,7 @@ skips background removal entirely. Set `"blend": "screen"` on the layer.
 
 | Model | Provider | Price | Notes |
 |---|---|---|---|
-| `fal-ai/birefnet/v2` | fal | $0.0008 / compute second | High-resolution dichotomous segmentation. Cheapest and sharpest on hair and cloth edges. |
+| `fal-ai/birefnet/v2` | fal | **T** $0.0008 / compute second | High-resolution dichotomous segmentation. Sharpest on hair and cloth edges. |
 | `fal-ai/bria/background/remove` | fal | see `get_pricing` | Licensed data, commercially safe. |
 | `pixelcut/background-removal`, `fal-ai/imageutils/rembg`, `fal-ai/ideogram/remove-background` | fal | see `get_pricing` | Alternatives. |
 | `recraft/remove-background` | kie | see kie pricing | The kie equivalent. |

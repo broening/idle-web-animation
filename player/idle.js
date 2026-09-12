@@ -8,8 +8,9 @@
  *     scrubbable and the contact sheet exact.
  *  2. No dependencies, no build step. Plain script tag, works from a folder.
  *  3. Chromium 103 is the floor (RedM / FiveM NUI). No syntax newer than that.
- *  4. Nine of Disney's twelve principles are enforced here, in the engine,
- *     not left to whoever writes the JSON. See docs/principles.md.
+ *  4. Several of Disney's twelve principles are built into the blocks rather
+ *     than left to whoever writes the JSON. docs/principles.md says which
+ *     ones are genuinely enforced, which are partial, and which are not.
  */
 (function (global) {
   'use strict';
@@ -25,6 +26,15 @@
 
   function num(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
 
+  /* For anything that ends up in a divisor. A period of 0 turns every sine
+   * into NaN and a whole figure into matrix(NaN,...); an interval of 0 made
+   * the blink loop run forever, because Math.floor(t/0) is Infinity and
+   * Infinity + 1 is still Infinity. Both are reachable from hand-written
+   * JSON, which is what the schema doc invites. */
+  function pos(v, d) {
+    return (typeof v === 'number' && isFinite(v) && v > 1e-6) ? v : d;
+  }
+
   /* Deterministic pseudo-random in 0..1 from an integer. Same n, same value,
    * forever. Used for blink jitter, so scrubbing back shows the same blinks. */
   function hash01(n) {
@@ -39,8 +49,12 @@
   }
 
   /* Two sines whose periods sit at the golden ratio. Their combined period is
-   * irrational, so the motion never visibly repeats - the same trick the
-   * loading screen already uses by running breath at 4 s and wind at 7.5 s. */
+   * irrational, so a single block never visibly repeats.
+   *
+   * This is NOT how the loading screen this project came from does it: that
+   * one runs breathe at 4.2 s, handsway at 4.2 s and windsway at 3.4 s, and
+   * phase-locks two of them on purpose. Checked, after an earlier version of
+   * this comment claimed the opposite. */
   function organic(t, period, phase) {
     var a = Math.sin(((t / period) + (phase || 0)) * TAU);
     var b = Math.sin(((t / (period * 1.6180339887)) + (phase || 0) * 0.37) * TAU);
@@ -105,7 +119,7 @@
      * inflating like a balloon. */
     breathe: function (t, cfg, layer, env, out) {
       var s = num(cfg.strength, 1);
-      var p = num(cfg.period, 4.0);
+      var p = pos(cfg.period, 4.0);
       var a = organic(t, p, num(cfg.phase, 0));
       out.sy += a * 0.012 * s;
       out.sx -= a * 0.0066 * s;
@@ -117,7 +131,7 @@
      * sideways slide. */
     sway: function (t, cfg, layer, env, out) {
       var s = num(cfg.strength, 1);
-      var p = num(cfg.period, 7.5);
+      var p = pos(cfg.period, 7.5);
       var a = organic(t, p, num(cfg.phase, 0));
       out.rot += a * num(cfg.degrees, 2.2) * s;
       /* A trace of drift along the swing keeps a wide cloak from looking
@@ -128,8 +142,8 @@
     /* Blinking. Deterministic schedule, occasional double blink, and a hint
      * of widening just before the lid drops - principle 2, anticipation. */
     blink: function (t, cfg, layer, env, out) {
-      var iv = num(cfg.interval, 4.2);
-      var dur = num(cfg.duration, 0.13);
+      var iv = pos(cfg.interval, 4.2);
+      var dur = pos(cfg.duration, 0.13);
       var i = Math.floor(t / iv);
       var amt = 0, pre = 0;
       for (var k = i - 1; k <= i + 1; k++) {
@@ -150,7 +164,7 @@
     gaze: function (t, cfg, layer, env, out) {
       var s = num(cfg.strength, 1);
       var reach = num(cfg.pixels, 9) * s;
-      var drift = organic(t, num(cfg.period, 11.3), 0.31) * 0.35;
+      var drift = organic(t, pos(cfg.period, 11.3), 0.31) * 0.35;
       var gx = clamp(env.pointerX * num(cfg.follow, 1) + drift, -1, 1);
       var gy = clamp(env.pointerY * num(cfg.follow, 1) * 0.6, -1, 1);
       out.tx += gx * reach;
@@ -164,15 +178,32 @@
     flipbook: function (t, cfg, layer, env, out) {
       var n = (layer.frames && layer.frames.length) || 0;
       if (!n) { out.frame = -1; return; }
-      var fps = num(cfg.fps, 12);
+      var fps = pos(cfg.fps, 12);
       if (cfg.mode === 'burst') {
-        var every = num(cfg.every, 6.5);
         var jitter = num(cfg.jitter, 0.45);
-        var i = Math.floor(t / every);
-        var start = i * every + hash01(i + 7) * every * jitter;
-        var dt = t - start;
         var span = n / fps;
-        out.frame = (dt >= 0 && dt < span) ? Math.floor(dt * fps) : -1;
+        /* A burst that runs longer than the gap between bursts is a
+         * contradiction: the next one starts before this one ends. Rather
+         * than pick a winner among overlapping copies - which returns one
+         * frozen frame - widen the gap so it degrades into a plain cycle. */
+        var every = Math.max(pos(cfg.every, 6.5), span);
+        /* Look back far enough that a burst outlasting its own slot is still
+         * found. Checking only the current slot silently truncated it: with
+         * 4 frames at 1 fps every 0.5 s, frame 0 was the only one that ever
+         * appeared and frames 1 to 3 were unreachable. */
+        var back = Math.ceil(span / every) + 1;
+        var i = Math.floor(t / every);
+        out.frame = -1;
+        /* Oldest still-running burst wins. Taking the newest instead means
+         * the answer is always frame 0, because the newest slot has by
+         * definition only just started - which is how the truncation looked
+         * after the first attempt at this fix. */
+        for (var b = back; b >= 0; b--) {
+          var slot = i - b;
+          var start = slot * every + hash01(slot + 7) * every * jitter;
+          var dt = t - start;
+          if (dt >= 0 && dt < span) { out.frame = Math.floor(dt * fps); break; }
+        }
       } else {
         out.frame = Math.floor(((t * fps) % n + n) % n);
       }
@@ -182,8 +213,12 @@
      * breathe on a period of their own, so it never locks to the chest. */
     glow: function (t, cfg, layer, env, out) {
       var s = num(cfg.strength, 1);
-      var a = (organic(t, num(cfg.period, 5.3), num(cfg.phase, 0)) + 1) * 0.5;
-      out.opacity *= 1 - (1 - num(cfg.min, 0.55)) * (1 - a) * s;
+      var a = (organic(t, pos(cfg.period, 5.3), num(cfg.phase, 0)) + 1) * 0.5;
+      /* Clamped, because strength is a slider that goes to 3. Unclamped, a
+       * strength of 2 with the default min of 0.55 drives opacity negative
+       * at the bottom of the cycle, and a negative opacity is not a dimmer
+       * light - it is an invalid style the browser throws away. */
+      out.opacity *= clamp(1 - (1 - num(cfg.min, 0.55)) * (1 - a) * s, 0, 1);
       out.brightness += a * num(cfg.brightness, 0.22) * s;
     }
   };
@@ -192,9 +227,48 @@
    * Solve: figure plus time gives plain state for every layer. No DOM.
    * ------------------------------------------------------------------ */
 
+  /* Which image of a layer is on screen right now, or -1 for none.
+   *
+   * Both renderers call this, and that is the point. They used to decide
+   * separately and disagreed: a layer with a ONE-entry `frames` array plus a
+   * burst flipbook stayed visible forever in the DOM (which only switched
+   * frames when there was more than one image) while the canvas hid it
+   * between bursts. The contact sheet is supposed to be proof of what ships,
+   * so a second opinion in the renderer is not a style question. */
+  function frameOf(layer, st) {
+    var n = (layer.frames && layer.frames.length) || 0;
+    if (!n) return 0;                    /* plain single-image layer */
+    if (st.frame === -1) return -1;      /* flipbook says: not now */
+    if (st.frame < 0) return 0;          /* frames but no flipbook motion */
+    return st.frame % n;
+  }
+
+  /* CSS mix-blend-mode and canvas globalCompositeOperation share most names
+   * but not all. Translating here keeps the two renderers identical instead
+   * of letting canvas silently fall back to whatever was set last. */
+  var CANVAS_BLEND = {
+    normal: 'source-over',
+    'plus-lighter': 'lighter',
+    'plus-darker': 'source-over'   /* no canvas equivalent; documented */
+  };
+
+  function canvasBlend(blend) {
+    if (!blend) return 'source-over';
+    if (CANVAS_BLEND[blend]) return CANVAS_BLEND[blend];
+    return blend;
+  }
+
   function chainDepth(byId, layer) {
     var d = 0, cur = layer, n = 0;
-    while (cur && cur.parent && n++ < 32) { cur = byId[cur.parent]; d++; }
+    /* Only a parent that actually resolves costs a follow-through step.
+     * Counting a dangling "parent": "ghost" shifted the layer back in time
+     * for a relationship that composes nothing. */
+    while (cur && cur.parent && n++ < 32) {
+      var next = byId[cur.parent];
+      if (!next) break;
+      cur = next;
+      d++;
+    }
     return d;
   }
 
@@ -213,11 +287,23 @@
     };
 
     var layers = figure.layers || [];
-    var byId = {};
+    /* Bare objects, so a layer called "constructor" or "toString" cannot
+     * return something from Object.prototype where a matrix is expected -
+     * that crashed the whole figure, not just the one layer. */
+    var byId = Object.create(null);
     var i, j, L;
-    for (i = 0; i < layers.length; i++) byId[layers[i].id] = layers[i];
+    /* First wins, so a duplicate id cannot silently steal the parent of an
+     * earlier layer. Keys below are the array index, not the id, so both
+     * copies still get their own transform in both renderers. */
+    for (i = 0; i < layers.length; i++) {
+      if (byId[layers[i].id] === undefined) byId[layers[i].id] = layers[i];
+    }
+    var idIndex = Object.create(null);
+    for (i = 0; i < layers.length; i++) {
+      if (idIndex[layers[i].id] === undefined) idIndex[layers[i].id] = i;
+    }
 
-    var local = {};
+    var local = [];
     var state = [];
 
     for (i = 0; i < layers.length; i++) {
@@ -246,34 +332,72 @@
         out.ty += env.pointerY * parallax * num(L.depth, 0) * 14;
       }
 
-      var pv = L.pivot || [0.5, 0.5];
-      local[L.id] = matTRS(out.tx, out.ty, out.rot, out.sx, out.sy,
-                           pv[0] * width, pv[1] * height);
+      /* pivot was the one numeric field never passed through num(), so a
+       * "pivot": [0.5] or a {x, y} object produced NaN in the translation
+       * and the two renderers then disagreed completely: CSS threw the
+       * declaration away, canvas ignored setTransform and kept the previous
+       * matrix. */
+      var pv = L.pivot;
+      var px = (pv && num(pv[0], 0.5)) || 0.5;
+      var py = (pv && num(pv[1], 0.5)) || 0.5;
+      local[i] = matTRS(out.tx, out.ty, out.rot, out.sx, out.sy,
+                        px * width, py * height);
 
       state.push({
         id: L.id,
-        opacity: out.opacity,
+        index: i,
+        parentIndex: (L.parent != null && idIndex[L.parent] !== undefined)
+          ? idIndex[L.parent] : -1,
+        /* Clamped here, not at the renderers. An opacity of -1 made the DOM
+         * layer invisible (CSS clamps to 0) and the canvas layer fully
+         * opaque (globalAlpha ignores an out-of-range value). */
+        opacity: clamp(num(out.opacity, 1), 0, 1),
         brightness: out.brightness,
         blink: out.blink,
         frame: out.frame,
-        hidden: (L.role === 'eyesOpen' && out.blink > 0.5)
+        role: L.role
       });
     }
 
-    /* Compose each layer with its parent chain. Flat DOM, correct hierarchy. */
-    var world = {};
-    function worldOf(id, guard) {
-      if (world[id]) return world[id];
-      var l = byId[id];
-      if (!l) return matIdentity();
-      var own = local[id] || matIdentity();
-      var m = (l.parent && guard < 32) ? matMul(worldOf(l.parent, guard + 1), own) : own;
-      world[id] = m;
+    /* Compose each layer with its parent chain. Flat DOM, correct hierarchy.
+     * Keyed by array index, so duplicate ids keep separate transforms. */
+    var world = [];
+    function worldOf(idx, guard) {
+      if (world[idx]) return world[idx];
+      var own = local[idx] || matIdentity();
+      var pIdx = state[idx] ? state[idx].parentIndex : -1;
+      var m = (pIdx >= 0 && pIdx !== idx && guard < 32)
+        ? matMul(worldOf(pIdx, guard + 1), own) : own;
+      /* Do not memoise a result that hit the depth guard: a shallower caller
+       * would reuse a truncated chain and get a different answer purely from
+       * where it happened to start. */
+      if (guard < 31) world[idx] = m;
       return m;
     }
+
+    /* A blink hides the layer that carries role "eyesOpen". The blink motion
+     * may sit on that layer or on an ancestor - the schema reads as though
+     * either works, and before this it silently only worked on the layer
+     * itself. */
+    function blinkAt(idx, guard) {
+      var st = state[idx];
+      if (!st) return 0;
+      if (st.blink > 0) return st.blink;
+      return (st.parentIndex >= 0 && st.parentIndex !== idx && guard < 32)
+        ? blinkAt(st.parentIndex, guard + 1) : 0;
+    }
+
     for (i = 0; i < state.length; i++) {
-      state[i].matrix = worldOf(state[i].id, 0);
-      state[i].css = matToCss(state[i].matrix);
+      var m = worldOf(i, 0);
+      /* Last line of defence. If anything upstream still produced a
+       * non-finite number, fall back to identity so at least both renderers
+       * draw the same wrong thing instead of two different wrong things. */
+      for (j = 0; j < 6; j++) {
+        if (!isFinite(m[j])) { m = matIdentity(); break; }
+      }
+      state[i].matrix = m;
+      state[i].css = matToCss(m);
+      state[i].hidden = (state[i].role === 'eyesOpen' && blinkAt(i, 0) > 0.5);
     }
 
     return state;
@@ -300,6 +424,7 @@
     this._raf = 0;
     this._gen = 0;
     this._nodes = {};
+    this._bound = [];
     this._build();
   }
 
@@ -320,7 +445,7 @@
     if (f.background && this.showBackground) {
       var bg = document.createElement('img');
       bg.className = 'idle-bg';
-      bg.src = this.base + f.background;
+      bg.src = resolveSrc(f, this.base, f.background);
       bg.alt = '';
       bg.draggable = false;
       if (f.backgroundZoom) bg.style.transform = 'scale(' + f.backgroundZoom + ')';
@@ -347,18 +472,21 @@
       if (L.blend) box.style.mixBlendMode = L.blend;
 
       var imgs = [];
-      var srcs = (L.frames && L.frames.length) ? L.frames : [L.src];
+      var hasFrames = !!(L.frames && L.frames.length);
+      var srcs = hasFrames ? L.frames : [L.src];
       for (var k = 0; k < srcs.length; k++) {
         var img = document.createElement('img');
-        img.src = this.base + srcs[k];
+        img.src = resolveSrc(f, this.base, srcs[k]);
         img.alt = L.alt || '';
         img.draggable = false;
-        if (srcs.length > 1) img.style.display = 'none';
+        /* Any frames array starts hidden, even a one-entry one: a burst
+         * flipbook must be able to switch it off between bursts. */
+        if (hasFrames) img.style.display = 'none';
         box.appendChild(img);
         imgs.push(img);
       }
       stage.appendChild(box);
-      this._nodes[L.id] = { box: box, imgs: imgs, shown: -2 };
+      this._nodes[L.id] = { box: box, imgs: imgs, frames: hasFrames, shown: -2, layer: L };
     }
 
     this.host.appendChild(stage);
@@ -389,11 +517,14 @@
       n.box.style.filter = s.brightness > 0.001
         ? 'brightness(' + (1 + s.brightness).toFixed(3) + ')'
         : '';
-      if (n.imgs.length > 1 && s.frame !== n.shown) {
-        for (var k = 0; k < n.imgs.length; k++) {
-          n.imgs[k].style.display = (k === s.frame) ? '' : 'none';
+      if (n.frames) {
+        var f = frameOf(n.layer, s);
+        if (f !== n.shown) {
+          for (var k = 0; k < n.imgs.length; k++) {
+            n.imgs[k].style.display = (k === f) ? '' : 'none';
+          }
+          n.shown = f;
         }
-        n.shown = s.frame;
       }
     }
     return st;
@@ -420,7 +551,17 @@
        * deliberately non-matching periods, so the window seam is visible -
        * that is the point of looking at a fixed window. */
       if (self.loop > 0) t -= Math.floor(t / self.loop) * self.loop;
-      self.render(t);
+      /* A throw inside the frame used to leave playing = true with no loop
+       * queued, so play() early-returned forever and the figure sat frozen
+       * while the button still read Pause. Stop cleanly instead. */
+      try {
+        self.render(t);
+      } catch (err) {
+        self.pause();
+        self.lastError = err;
+        if (global.console && console.error) console.error('idle.js render failed', err);
+        return;
+      }
       self._raf = global.requestAnimationFrame(step);
     }
     this._raf = global.requestAnimationFrame(step);
@@ -435,19 +576,37 @@
 
   IdleFigure.prototype.seek = function (t) { this.pause(); this.render(t); };
 
+  /* Stop the clock, drop the listeners, empty the host. Without this the only
+   * way to replace a figure was to build a second one over the same element,
+   * which left the first still running and still writing into orphaned
+   * boxes - two rAF loops on one host. */
+  IdleFigure.prototype.destroy = function () {
+    this.pause();
+    for (var i = 0; i < this._bound.length; i++) {
+      var b = this._bound[i];
+      b.el.removeEventListener(b.type, b.fn);
+    }
+    this._bound = [];
+    if (this.host) this.host.innerHTML = '';
+    this._nodes = {};
+  };
+
   /* Pointer input in -1..1, for gaze and parallax. */
   IdleFigure.prototype.trackPointer = function (el) {
     var self = this;
     el = el || this.host;
-    el.addEventListener('mousemove', function (e) {
+    function move(e) {
       var r = el.getBoundingClientRect();
       self.pointerX = clamp(((e.clientX - r.left) / r.width) * 2 - 1, -1, 1);
       self.pointerY = clamp(((e.clientY - r.top) / r.height) * 2 - 1, -1, 1);
-    });
-    el.addEventListener('mouseleave', function () {
-      self.pointerX = 0;
-      self.pointerY = 0;
-    });
+    }
+    function leave() { self.pointerX = 0; self.pointerY = 0; }
+    el.addEventListener('mousemove', move);
+    el.addEventListener('mouseleave', leave);
+    /* Remembered so destroy() can actually take them off again. Anonymous
+     * closures could never be removed, so repeated calls piled up. */
+    this._bound.push({ el: el, type: 'mousemove', fn: move });
+    this._bound.push({ el: el, type: 'mouseleave', fn: leave });
   };
 
   /* ------------------------------------------------------------------ *
@@ -457,6 +616,15 @@
    * what makes the contact sheet exact and the size export possible without
    * a screenshot tool, a headless browser or a single npm package.
    * ------------------------------------------------------------------ */
+
+  /* A layer's `src` is a path, always - that is what gets written into the
+   * exported folder. A figure started from a dropped file has no path on any
+   * server yet, so `figure.sources` maps the path to a blob URL for display
+   * only. Both renderers go through here, and export drops the map. */
+  function resolveSrc(figure, base, src) {
+    if (figure && figure.sources && figure.sources[src]) return figure.sources[src];
+    return base + src;
+  }
 
   function loadImages(figure, base) {
     base = base ? base.replace(/\/+$/, '') + '/' : '';
@@ -468,7 +636,7 @@
         var im = new Image();
         im.onload = function () { res(im); };
         im.onerror = function () { rej(new Error('cannot load ' + src)); };
-        im.src = base + src;
+        im.src = resolveSrc(figure, base, src);
       });
     }
 
@@ -521,10 +689,12 @@
     for (i = 0; i < layers.length; i++) {
       var L = layers[i];
       var s2 = byId[L.id];
-      if (!s2 || s2.hidden || s2.frame === -1) continue;
+      if (!s2 || s2.hidden) continue;
+      var fi = frameOf(L, s2);
+      if (fi < 0) continue;
       var bank = images[L.id];
       if (!bank) continue;
-      var img = bank[s2.frame >= 0 ? s2.frame : 0];
+      var img = bank[fi];
       if (!img) continue;
 
       var m = s2.matrix;
@@ -532,7 +702,7 @@
       g.globalAlpha = s2.opacity;
       /* Canvas uses the same names as mix-blend-mode, so the contact sheet
        * shows what the page shows. */
-      g.globalCompositeOperation = L.blend || 'source-over';
+      g.globalCompositeOperation = canvasBlend(L.blend);
       if (s2.brightness > 0.001 && 'filter' in g) {
         g.filter = 'brightness(' + (1 + s2.brightness).toFixed(3) + ')';
       }
@@ -550,6 +720,9 @@
   var api = {
     IdleFigure: IdleFigure,
     solve: solve,
+    frameOf: frameOf,
+    resolveSrc: resolveSrc,
+    canvasBlend: canvasBlend,
     loadImages: loadImages,
     drawFrame: drawFrame,
     MOTIONS: MOTIONS,

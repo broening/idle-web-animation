@@ -11,17 +11,26 @@ It runs the same way on any modern website.
 
 ## Why not Spine, Live2D or Godot
 
-| | Editor | Web runtime | Cost |
+| | Web runtime | Text-authorable | Cost |
 |---|---|---|---|
-| **Spine** | GUI only | WebGL canvas | 69–349 USD, runtime licence requires ownership |
-| **Live2D Cubism** | GUI only | WebGL canvas | free below a revenue threshold |
-| **Godot** | GUI only | WASM, tens of MB | free |
-| **this** | plain JSON | DOM + CSS transforms | free |
+| **Spine** | `spine-webgl`, also `spine-canvas` (2D canvas) | yes — the JSON skeleton format is documented and editable, plus a headless CLI | $69 Essential / $379 Professional; **Enterprise $2,499 + $379 per user** above $500k revenue. The runtime licence requires holding an editor licence. |
+| **Live2D Cubism** | WebGL canvas | no — `.cmo3` / `.moc3` are editor formats | Editor free but hard-capped (1 texture, 100 ArtMeshes, 50 deformers); PRO is paid at any revenue. The separate SDK publication licence is free below ¥10M. |
+| **Godot** | WASM bundle, tens of MB | yes — `.tscn` and `.gd` are plain text, and `--headless --script` is documented | free, MIT |
+| **this** | DOM + CSS transforms | yes — one JSON file | free |
 
-All three of the others are built by dragging bones around in a desktop
-application. An agent cannot use a mouse; it can write text. That single fact,
-plus a target that wants HTML and CSS rather than a canvas, is the whole
-argument. The engine here is roughly 500 lines.
+**The reason is the runtime, not the authoring.** An earlier version of this
+file argued that all three are mouse-only and an agent cannot use a mouse.
+That is wrong: Godot is thoroughly text-authorable and Spine's skeleton JSON
+is a documented, hand-editable format. Only Live2D is genuinely editor-locked.
+
+What none of the three give you is the actual target: **DOM and CSS transforms
+inside a 2022-era CEF, shipped as a folder you copy.** Spine and Live2D paint
+into a canvas, which cannot be styled, blended or laid out with the rest of the
+page. Godot's web export is a WASM runtime measured in tens of megabytes for a
+loading screen that has to appear instantly. Spine additionally costs money,
+and the runtime licence is tied to owning the editor.
+
+The engine here is 502 non-blank lines.
 
 ---
 
@@ -37,10 +46,13 @@ studio/
 tools/
   flatten.py            rigged figure -> the one flat PNG it came from
   test-determinism.mjs  proves solve() is a pure function of time
+  test-agreement.mjs    proves the DOM and canvas renderers agree
+  check-compat.py       refuses anything newer than Chromium 103
 figures/                the art. Not in git.
 docs/
   figure-json.md        the schema
-  principles.md         which Disney principle lives where
+  principles.md         which Disney principle lives where, and which does not
+  models.md             which model for which job, with live prices
 ```
 
 ## Run it
@@ -94,8 +106,10 @@ folder next to `player/idle.js`, and mount it:
    JSON file. Copying a folder is the whole deployment.
 3. **Chromium 103 is the floor.** No `:has()`, no CSS nesting, no `oklch()`,
    no `color-mix()`, no container queries.
-4. **Nine of the twelve principles are enforced by the engine**, not by
-   whoever writes the JSON. See `docs/principles.md`.
+4. **Four of the twelve principles are genuinely enforced by the engine**,
+   four are partial, two are not implemented and two are judgement.
+   `docs/principles.md` says which is which and why, rather than claiming
+   more than the code does.
 
 ## Checking a figure
 
@@ -103,9 +117,18 @@ A single screenshot cannot prove movement, so the studio offers two views:
 
 - **Contact sheet** — 24 frames of the 8 second window in one image.
 - **Events** — a 30 second scan at 60 fps listing every blink and burst with
-  its duration and spacing. This exists because a blink lasts about 70 ms
-  while the sheet samples every 330 ms, so the sheet misses roughly three
-  blinks out of four. Measured, not assumed.
+  its duration and spacing.
+
+The second one exists because the first one cannot see short events. Measured
+on the shipped figure at 0.5 ms resolution over 600 seconds: a blink holds the
+eye closed for **86.1 ms** (86.0 to 86.5), and a sheet sampling every 333 ms
+catches **39 of 165**, so it misses about three in four. On this particular
+figure it is worse than that — the sample grid is fixed and the blinks never
+land on it, so the 24 cell sheet catches **none of them, every time**.
+
+Note that the events scan reads durations off its own 60 fps grid, so it
+reports an 86 ms blink as 67 or 83 ms. Good enough to prove the event happens
+and to compare spacings; not a measurement instrument.
 
 ## Licence
 

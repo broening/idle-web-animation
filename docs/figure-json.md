@@ -20,7 +20,7 @@ keyframes.
 | `size` | The canvas every layer shares. Layers are never cropped and never carry an offset — the pivot alone decides how a layer moves. |
 | `background` | Optional backdrop. It fills the host element, not the figure canvas, because a backdrop is rarely the same shape as the character. |
 | `backgroundZoom` | Scale for the backdrop, e.g. `1.18`. |
-| `motion.windowSeconds` | The review window. The contact sheet samples this span. It is **not** a loop period — see `principles.md`. |
+| `motion.windowSeconds` | The review window. The contact sheet samples this span. It is **not** a loop period — see `principles.md`. Read by the studio only; the player ignores it. |
 | `motion.followSeconds` | How far each step down the parent chain lags. `0.085` is a good start. |
 | `motion.parallax` | How strongly layers separate as the pointer moves. `0.35` is subtle, above `0.8` it starts to look like a toy. |
 
@@ -51,8 +51,13 @@ keyframes.
 | `pivot` | `[x, y]` in 0…1 of the canvas. This is the joint: the elbow for a hand, the neck for a head, the collar for a cloak. Drag it in the studio rather than guessing. |
 | `depth` | 0…1, back to front. Drives parallax only. |
 | `lag` | Extra seconds of delay on top of the chain lag. |
-| `role` | `"eyesOpen"` marks the layer that a `blink` hides. |
+| `role` | `"eyesOpen"` marks the layer a `blink` hides. The `blink` motion may sit on this layer or on any ancestor. |
 | `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |
+| `alt` | Alt text for the `<img>`. Cosmetic, but free. |
+| `opacity` | Base opacity, clamped to 0…1. Out-of-range values used to make the DOM layer invisible and the canvas layer opaque — two different results from one file. |
+
+`name` and `note` at the top level are for people. The player never reads
+them; the studio takes a figure's name from its folder.
 
 Layers are listed **back to front**. The studio shows them the other way
 round, the way a layer palette does.
@@ -100,10 +105,28 @@ removal pass at all.
 blend mode works; the canvas renderer uses the same names, so what the contact
 sheet shows is what the page shows.
 
-## Two rules that save time
+## Three rules that save time
 
 1. **The pivot is a joint, not a centre.** A hand rotating about its own
    middle looks like a spinning sticker. About the elbow it looks like an arm.
-2. **Keep periods from dividing into each other.** 4.0 and 8.0 will visibly
-   lock together; 4.0 and 7.5 will not. This is principle 8 and it is the
-   difference between alive and mechanical.
+2. **Keep periods apart between independent systems.** A cloak and a chest
+   should not share one — 4.0 and 8.0 visibly lock together, 4.0 and 7.5 do
+   not. But a chest and a belly *should* be close: they are one pair of
+   lungs, and forcing them apart looks wrong. The engine does not check this;
+   it is the author's job. See principle 8 in `principles.md`.
+3. **Anything that ends up in a divisor must be greater than zero.** A
+   `period: 0` or an `interval: 0` is rejected and the default is used.
+   Earlier they produced a figure made of `NaN`, and `interval: 0` froze the
+   tab outright.
+
+## Blend modes the canvas cannot do
+
+`screen`, `multiply`, `overlay`, `darken`, `lighten`, `difference` and the
+rest of the standard set behave identically in the page and in the contact
+sheet. Three CSS values have no canvas equivalent and are translated:
+
+| CSS value | Canvas gets | Effect |
+|---|---|---|
+| `normal` | `source-over` | identical, as expected |
+| `plus-lighter` | `lighter` | very close |
+| `plus-darker` | `source-over` | **not reproduced** — avoid it |
