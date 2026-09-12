@@ -4,8 +4,8 @@ Turn a flat character PNG into a figure that breathes, blinks, looks around
 and throws lightning — as plain layered images driven by a small deterministic
 engine. No game engine, no editor licence, no build step.
 
-Made for the loading screen of a RedM server, so **Chromium 103 is the floor**.
-It runs the same way on any modern website.
+It runs on any modern website, and inside the 2022-era Chromium that FiveM
+and RedM use for their in-game pages, so **Chromium 103 is the floor**.
 
 ---
 
@@ -85,10 +85,23 @@ request has no business being reachable from the network.
 ## Start a figure
 
 A figure begins as one flat image, straight out of the drawing. Press
-**Start from a flat image** in the studio and drop the PNG in. It mounts as a
-single layer that breathes — enough to see it alive — and from there it gets
-split into parts by a layerize model (see `docs/models.md`) and each part gets
-its motion.
+**Flat image…** in the studio and drop the PNG in. It mounts as a single
+layer that breathes — enough to see it alive. From there it gets split into
+parts, and each part gets its motion. Three ways in, and none of them needs
+an account or a key:
+
+- **One flat picture.** Press **Mark**, paint one rough blob per part, name
+  them, press **Cut**. About two seconds, and the names rig the parts. The
+  next section says how.
+- **Parts already cut**, one full-canvas image each: **Upload parts…**, or
+  `tools/import-layers.py` from a shell.
+- **Parts from several pictures**: cut each one on its own, then **Add part**
+  pulls a layer across.
+
+A layerize model can do the splitting instead, and an edit model can draw
+what is behind a part, which no cut of a flat picture can. That route costs
+money and needs API keys. `docs/cutting.md` says when it is worth it and
+`docs/models.md` which model for which job.
 
 Once a figure is loaded the layer list is a layer palette: drag a row by its
 grip to change draw order, and the dot beside it switches that layer off on
@@ -99,7 +112,7 @@ contact sheet ignores it, because the sheet's job is to show what ships.
 what you have changed and reloads that file. **Delete figure**, two clicks
 like removing a layer, throws the whole folder away — every image, the rig,
 `figures/index.json`'s entry for it. A figure that only lives in this page
-(dropped in from **Start from a flat image** and never saved) needs no
+(dropped in from **Flat image…** and never saved) needs no
 server call for that: discarding it just forgets it, and any other unsaved
 figure you have not yet saved stays exactly where it was. All three need
 `tools/serve.py`.
@@ -109,8 +122,8 @@ checkout that dropped it — without the studio ever being asked. The list
 notices on its own: a figure whose `figure.json` no longer answers is quietly
 dropped from the picker and from `index.json`, with one line saying which one
 it was. Nothing is guessed back into existence; if every figure listed turns
-out to be missing, the studio says so and waits for **Start from a flat
-image** or **Create**.
+out to be missing, the studio says so and waits for **Flat image…** or
+**Create**.
 
 The studio never shows the figure's own backdrop. When you are judging how
 something moves, a painted scene behind it is noise. Pick a stage colour
@@ -150,9 +163,10 @@ better one: on marks painted 10 px inside the true shape, a 15 px reach scored
 0.95 and a 90 px reach 0.65. And a flat picture only contains what is
 **visible** - a pupil with six visible pixels cannot be cut out at all, and
 what sits behind a part is simply not in the file, so a part that moves far
-shows a hole. That is why `docs/cutting.md` prefers asking a model to draw the
-picture again without the part. Marking is the cheap route, not the good
-one.
+shows a hole. At the few degrees this engine moves a part, that is a seam at
+the edge rather than a hole in the middle, but it is real. When it shows,
+`docs/cutting.md` has the route that asks a model to draw the picture again
+without the part, at a price.
 
 ### Parts out of more than one picture
 
