@@ -1,11 +1,18 @@
-# idle-web-animation
+# idle-web-animation — 2D character idle animation for the web
 
 Turn a flat character PNG into a figure that breathes, blinks, looks around
 and throws lightning — as plain layered images driven by a small deterministic
 engine. No game engine, no editor licence, no build step.
 
+It is a free, open-source alternative to Spine and Live2D for 2D cutout and
+sprite character animation, authored as one JSON file instead of in an editor.
+
 It runs on any modern website, and inside the 2022-era Chromium that FiveM
 and RedM use for their in-game pages, so **Chromium 103 is the floor**.
+
+**Live demo:** <https://broening.github.io/idle-web-animation/> — move your
+mouse and the figure follows it. The [studio](https://broening.github.io/idle-web-animation/studio/)
+runs there too, read-only.
 
 ![Pedro, the demo figure: he breathes, the poncho sways, the smoke rises, the eyes look around and blink](docs/img/pedro.webp)
 

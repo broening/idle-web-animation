@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idle-web-animation — live demo</title>
+<meta name="description" content="A free, open-source alternative to Spine and Live2D for 2D cutout character animation on the web. One JSON file, no engine, no editor licence. Live demo.">
+<link rel="canonical" href="https://broening.github.io/idle-web-animation/">
+<meta property="og:title" content="idle-web-animation — 2D character idle animation for the web">
+<meta property="og:description" content="A free, open-source alternative to Spine and Live2D. Layered images, one JSON file, no build step. Move your mouse over the figure.">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="player/idle.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0f13; color: #e6e9ee;
+    font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; }
+  #hero { position: fixed; inset: 0; }
+  .veil { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0,0,0,0.55)); }
+  .bar { position: fixed; left: 0; right: 0; top: 0; z-index: 3;
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding: 16px 20px; }
+  .bar h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .2px; }
+  .bar h1 span { font-weight: 400; color: #aab2bd; }
+  .bar .grow { flex: 1; }
+  .bar a { color: #e6e9ee; text-decoration: none; font-weight: 600;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 8px;
+    padding: 7px 12px; background: rgba(0,0,0,.35); }
+  .bar a:hover { background: rgba(255,255,255,.12); }
+  .tag { position: fixed; left: 20px; bottom: 18px; z-index: 3; max-width: 30rem;
+    color: #cdd3db; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .tag b { color: #fff; }
+  .hint { position: fixed; right: 20px; bottom: 18px; z-index: 3;
+    color: #aab2bd; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  @media (max-width: 620px) { .hint { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>idle-web-animation <span>— 2D idle animation for the web</span></h1>
+  <div class="grow"></div>
+  <a href="studio/">Open the studio</a>
+  <a href="https://github.com/broening/idle-web-animation">View on GitHub</a>
+</div>
+
+<div id="hero" aria-label="Animated 2D character, Pedro, breathing and looking around"></div>
+<div class="veil"></div>
+
+<p class="tag">A free, open-source alternative to <b>Spine</b> and <b>Live2D</b>
+for 2D cutout character animation. One JSON file, no engine, no build step.</p>
+<p class="hint">Move your mouse — he follows it.</p>
+
+<script src="player/idle.js"></script>
+<script>
+  (function () {
+    var host = document.getElementById('hero');
+    fetch('figures/pedro/figure.json').then(function (r) {
+      if (!r.ok) throw new Error('figure.json ' + r.status);
+      return r.json();
+    }).then(function (fig) {
+      var f = new IdleFigure(host, fig, 'figures/pedro/');
+      f.trackPointer(document.body);
+      window.addEventListener('resize', function () { f.fit(); });
+      var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (still) { f.seek(2.0); } else { f.play(); }
+    }).catch(function (e) {
+      host.innerHTML = '<p style="position:absolute;inset:0;display:flex;'
+        + 'align-items:center;justify-content:center;color:#aab2bd">'
+        + 'Could not load the demo figure (' + e.message + ').</p>';
+    });
+  })();
+</script>
+
+</body>
+</html>
