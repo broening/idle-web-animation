@@ -32,10 +32,41 @@ sits behind an arm is already reconstructed.
 | `seedream/5-pro-layer-decomposition` | kie | $0.0375 / image | Same model, flat price instead of runtime. Also returns per-layer name, bbox and description. |
 | `fal-ai/qwen-image-layered` | fal | $0.05 / image | `num_layers` is explicit (default 4) and it has a **`seed`**, so a run is repeatable. No prompt steering. |
 
-**Verdict:** test all three. Seedream layerize first, because the prompt field
-is the only one that lets the plan from `plan.md` drive the cut. Qwen is the
-control: its seed makes it the only one that can prove a bad result was the
-model and not the dice.
+**Tested 29.08.2026 on the priest.** Input `figures/priest/source.png`,
+1000x1000, prompt naming six parts.
+
+| | seedream layerize | qwen-image-layered | kie decomposition |
+|---|---|---|---|
+| parts returned | **6, exactly the ones asked for** | 6 images, one of them empty, one the whole figure | job failed |
+| per-layer name | yes | no | - |
+| bounding box | yes, absolute pixels | no | - |
+| z order | yes | no | - |
+| resolution | kept 1000x1000 | downscaled to 640x640 | - |
+| reconstruction | colour distance 9.2/255, nothing uncovered, 6.5 % double-covered | 5.5/255, but only because one layer is the whole figure | - |
+
+**Winner: `bytedance/seedream/v5/pro/layerize`, and not close.** It returned
+"Belly and lower jacket", "Arm", "Chest and shoulders including white clerical
+collar", "Head with hair and round glasses", "Open eyes" and "Hand holding the
+wooden stake" — each transparent, each with a box, in stacking order. That
+metadata is worth as much as the pixels: it maps straight onto `figure.json`.
+
+Qwen decomposed almost nothing and tells you nothing about what it did return.
+Its `seed` is still the only reproducibility any of them offers.
+
+The kie job failed before the model ran: kie's servers could not fetch the
+image because fal's CDN host `v3b.fal.media` serves a certificate issued for a
+Kubernetes cluster. Nothing to do with the model, and kie does not bill a
+failed task — the balance was unchanged. To retry it, the source needs a host
+with a valid certificate.
+
+**What the ground-truth comparison actually measures.** IoU against the
+hand-made priest gave head 0.873, hand 0.560, chest 0.556, belly 0.493, eyes
+0.355 and arm **0.000**. The zero is not a defect: the hand rig's `arm.webp`
+is at x 722-882 and the machine cut the sleeve at x 101-331 — different arms.
+The two decompositions simply draw different boundaries, which is expected and
+allowed. So IoU against a hand rig measures *agreement*, not *quality*. For a
+new figure there is no hand rig at all, so the number that carries weight is
+the reconstruction: do the layers, stacked in order, give the original back.
 
 ## Job 2 — Fill what was behind (fallback)
 
