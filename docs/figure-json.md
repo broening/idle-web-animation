@@ -17,7 +17,7 @@ keyframes.
 
 | Field | Meaning |
 |---|---|
-| `size` | The canvas every layer shares. Layers are never cropped and never carry an offset — the pivot alone decides how a layer moves. |
+| `size` | The canvas every layer shares. Layers are never cropped: each one is a full-canvas image, so a layer sits where its pixels are. `offset` corrects a part that was cut a few pixels off; nothing else displaces a layer. |
 | `background` | Optional backdrop. It fills the host element, not the figure canvas, because a backdrop is rarely the same shape as the character. |
 | `backgroundZoom` | Scale for the backdrop, e.g. `1.18`. |
 | `motion.windowSeconds` | The review window. The contact sheet samples this span. It is **not** a loop period — see `principles.md`. Read by the studio only; the player ignores it. |
@@ -34,6 +34,7 @@ keyframes.
   "parent": "arm",
   "pivot": [0.13, 0.78],
   "depth": 0.7,
+  "offset": [0, 0],
   "lag": 0,
   "opacity": 1,
   "motions": [
@@ -50,6 +51,7 @@ keyframes.
 | `parent` | Another layer's `id`. Transforms compose, and the child inherits a time lag. Draw order is unaffected — it comes only from the array order. |
 | `pivot` | `[x, y]` in 0…1 of the canvas. This is the joint: the elbow for a hand, the neck for a head, the collar for a cloak. Drag it in the studio rather than guessing. |
 | `depth` | 0…1, back to front. Drives parallax only. |
+| `offset` | `[x, y]` in canvas pixels, a standing correction for a part that was cut a few pixels off. Children inherit it; the pivot does not move with it. Alt-drag it on the stage, or nudge it with the arrow keys. Leave it out when it is `[0, 0]`. |
 | `lag` | Extra seconds of delay on top of the chain lag. |
 | `role` | `"eyesOpen"` marks the layer a `blink` hides. The `blink` motion may sit on this layer or on any ancestor. |
 | `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |

@@ -98,6 +98,9 @@
     ];
   }
 
+  /* See the note in render(). Below 1/255 of a channel, so it cannot show. */
+  var ALPHA_FLOOR = 0.0008;
+
   function matToCss(m) {
     return 'matrix(' + m[0].toFixed(6) + ',' + m[1].toFixed(6) + ',' +
            m[2].toFixed(6) + ',' + m[3].toFixed(6) + ',' +
@@ -435,7 +438,22 @@
       var pv = L.pivot;
       var px = (pv && num(pv[0], 0.5)) || 0.5;
       var py = (pv && num(pv[1], 0.5)) || 0.5;
-      local[i] = matTRS(out.tx, out.ty, out.rot, out.sx, out.sy,
+
+      /* A standing correction in canvas pixels, on top of whatever the
+       * motions do. Parts come out of one flat image, so most of them already
+       * sit where they belong, but a few land two or three pixels off and no
+       * motion setting can put them back - a seam is not movement.
+       *
+       * Children inherit it, because it rides in the local matrix: nudging a
+       * head has to take the eyes painted on it along. The pivot deliberately
+       * stays where it was. The pivot is the joint, chosen on the stage; this
+       * is a correction to the pixels, and moving both would undo the nudge
+       * for every layer that rotates. */
+      var of = L.offset;
+      var ox = of ? num(of[0], 0) : 0;
+      var oy = of ? num(of[1], 0) : 0;
+
+      local[i] = matTRS(out.tx + ox, out.ty + oy, out.rot, out.sx, out.sy,
                         px * width, py * height);
 
       /* Principle 11, solid drawing: layers displace by their own depth when
@@ -585,6 +603,17 @@
        * mix-blend-mode has been in Chrome since 41, well under our floor. */
       if (L.blend) box.style.mixBlendMode = L.blend;
 
+      /* A layer gets a `filter` only if one of its own motions can write
+       * brightness - glow and charge are the two that do. Everything else is
+       * left without one, so it never needs a render surface. See the note in
+       * idle.css for what happened when they all had one. */
+      var lit = false;
+      var ms = L.motions || [];
+      for (var mi = 0; mi < ms.length; mi++) {
+        if (ms[mi] && (ms[mi].type === 'glow' || ms[mi].type === 'charge')) lit = true;
+      }
+      if (lit) box.style.willChange = 'transform, opacity, filter';
+
       var imgs = [];
       var hasFrames = !!(L.frames && L.frames.length);
       var srcs = hasFrames ? L.frames : [L.src];
@@ -595,12 +624,15 @@
         img.draggable = false;
         /* Any frames array starts hidden, even a one-entry one: a burst
          * flipbook must be able to switch it off between bursts. */
-        if (hasFrames) img.style.display = 'none';
+        if (hasFrames) img.style.visibility = 'hidden';
         box.appendChild(img);
         imgs.push(img);
       }
       stage.appendChild(box);
-      this._nodes[L.id] = { box: box, imgs: imgs, frames: hasFrames, shown: -2, layer: L };
+      this._nodes[L.id] = {
+        box: box, imgs: imgs, frames: hasFrames, shown: -2, layer: L,
+        css: '', op: -1, fil: '', lit: lit
+      };
     }
 
     this.host.appendChild(stage);
@@ -626,16 +658,61 @@
       var s = st[i];
       var n = this._nodes[s.id];
       if (!n) continue;
-      n.box.style.transform = s.css;
-      n.box.style.opacity = s.hidden ? 0 : s.opacity;
-      n.box.style.filter = s.brightness > 0.001
-        ? 'brightness(' + (1 + s.brightness).toFixed(3) + ')'
-        : '';
+      /* Every property below is written only when its value actually changed.
+       * A style write on an unchanged value still marks the layer dirty. */
+      if (s.css !== n.css) { n.box.style.transform = s.css; n.css = s.css; }
+
+      /* Never written as a hard 0. A drift group is off for over a second
+       * between two rises, and a browser is free to stop painting a fully
+       * transparent layer and throw its decoded image away. Coming back then
+       * costs a re-decode of a full-canvas WebP, which does not fit in a
+       * frame, so the group appears one frame late and out of step with the
+       * other nine.
+       *
+       * ALPHA_FLOOR * 255 is 0.2, so every channel still rounds to the same
+       * byte it would have at zero. The layer stays painted, stays decoded,
+       * and stays invisible. The canvas renderer keeps the true 0: it repaints
+       * every frame from scratch and has nothing to lose.
+       *
+       * This costs no extra surface - a plain opacity does not promote. */
+      var op = s.hidden ? 0 : s.opacity;
+      if (op < ALPHA_FLOOR) op = ALPHA_FLOOR;
+      if (op !== n.op) { n.box.style.opacity = op; n.op = op; }
+
+      /* A layer can be off in two different ways, and the filter below has to
+       * respect both: opacity at the floor, or a flipbook with no frame to
+       * show. charge uses the second one - between flashes it sets frame -1
+       * and leaves opacity alone - so an opacity test on its own reported all
+       * eight of the priest's bolts as visible around the clock. */
+      var f = n.frames ? frameOf(n.layer, s) : 0;
+      var off = (op <= ALPHA_FLOOR) || (f === -1);
+
+      /* A lit layer holds a constant brightness(1) while it is on screen,
+       * rather than dropping to none whenever brightness happens to be zero:
+       * a filter list that empties out tears the layer's render surface down
+       * and rebuilds it on the next lit frame, one unpainted frame per switch.
+       * While it is off it gives the filter up entirely, so a bolt that fires
+       * for two seconds in twenty does not hold a surface for the other
+       * eighteen - and the rebuild then lands on a frame with nothing to show
+       * anyway. An unlit layer never gets a filter at all.
+       *
+       * This is the difference that matters on Edge. Grim's 22 layers each
+       * carrying one was 22 render passes a frame, and Edge answered by
+       * leaving whole layers unpainted. Now grim holds two and the priest,
+       * mid-charge, four. */
+      if (n.lit) {
+        var fil = off
+          ? '' : 'brightness(' + (1 + s.brightness).toFixed(3) + ')';
+        if (fil !== n.fil) { n.box.style.filter = fil; n.fil = fil; }
+      }
+
       if (n.frames) {
-        var f = frameOf(n.layer, s);
         if (f !== n.shown) {
+          /* visibility, not display: a display:none image can be dropped from
+           * the compositor and has to be decoded again when it comes back,
+           * which is the same one-frame hole in a different place. */
           for (var k = 0; k < n.imgs.length; k++) {
-            n.imgs[k].style.display = (k === f) ? '' : 'none';
+            n.imgs[k].style.visibility = (k === f) ? 'visible' : 'hidden';
           }
           n.shown = f;
         }

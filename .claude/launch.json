@@ -4,12 +4,17 @@
     {
       "name": "studio",
       "runtimeExecutable": "python",
-      "runtimeArgs": [
-        "tools/serve.py",
-        "5173"
-      ],
+      "runtimeArgs": ["tools/serve.py", "5173"],
       "port": 5173,
       "url": "http://localhost:5173"
+    },
+    {
+      "name": "ladescreen",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5180", "--directory",
+                      "C:/Users/danie/Projects/GH_Loading_Screen"],
+      "port": 5180,
+      "url": "http://localhost:5180"
     }
   ]
 }

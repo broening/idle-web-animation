@@ -48,11 +48,39 @@
 /* Every layer is a full-canvas transparent image. No offsets, no cropping,
  * no per-layer geometry to keep in sync - the pivot alone decides how it
  * moves. That is why the JSON stays short enough to read. */
+/* `filter` is deliberately not in this list. A hint is cheap, but an actual
+ * filter is not: it forces the layer onto its own render surface, which is a
+ * whole extra render pass every frame. Grim is 22 full-canvas layers, and for
+ * a while every one of them carried a constant brightness(1) - 22 render
+ * passes to draw a picture that needs two. Edge gave up somewhere in the
+ * middle of that and left whole layers unpainted for a frame; the motes, drawn
+ * last, were the only thing that survived, so the figure strobed underneath a
+ * spray that did not. Brave, on the same Chromium, absorbed it.
+ *
+ * So filters are handed out per layer, in idle.js, to the two that light up. */
 .idle-layer {
   transform-origin: 0 0;
-  will-change: transform, opacity, filter;
   pointer-events: none;
 }
+
+/* No will-change here, and that is the point.
+
+   A hint is a promise to the compositor that this layer will change, and it
+   answers by giving the layer its own texture. Twenty-two layers on grim is
+   twenty-two textures of about 900x900 on screen - roughly 70 MB - to draw a
+   picture that fits in one. Ten of those hold the spray, and each of those ten
+   is a full-canvas image carrying about fifteen specks; measured over 300 s, a
+   group sits invisible for up to 7.8 s at a stretch. A texture that large, that
+   empty and that idle is the first thing a compositor short of memory throws
+   away, and the frame it comes back it has to be rasterised again - which is
+   one frame of missing specks. Brave had the room. Edge did not, and the spray
+   strobed.
+
+   Without the hint the whole stage rasterises into one surface. That is more
+   raster work per frame and far less memory, and for a stack of flat images
+   drawn at screen size it is the cheaper trade. The two layers that genuinely
+   need isolating - the ones that light up - are hinted individually in
+   idle.js, where the player can see which ones those are. */
 
 .idle-layer img {
   user-select: none;
