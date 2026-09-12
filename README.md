@@ -304,6 +304,17 @@ folder next to `player/idle.js`, and mount it:
 </script>
 ```
 
+## Build it with an AI agent
+
+Everything a figure is made of is text and commands, so the AI in your editor
+can rig one. `AGENTS.md` tells it how a figure is supposed to behave: which
+block belongs on which part, where a pivot goes, which periods have to stay
+apart, and which checks to run before it says it is done. Claude Code also
+picks up the `rig-figure` skill from `.claude/skills/`. The agent edits
+`figure.json`, runs the tools, and proves the result with the same tests you
+run; what it cannot do is paint the marks for a cut or judge a pivot by eye,
+and the guide says so.
+
 ## The rules that shape the code
 
 1. **Everything is a pure function of time.** `solve(figure, t)` returns the
