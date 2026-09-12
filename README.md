@@ -7,6 +7,11 @@ engine. No game engine, no editor licence, no build step.
 It runs on any modern website, and inside the 2022-era Chromium that FiveM
 and RedM use for their in-game pages, so **Chromium 103 is the floor**.
 
+![Pedro, the demo figure: he breathes, the poncho sways, the smoke rises, the eyes look around and blink](docs/img/pedro.webp)
+
+*Pedro, the demo figure that ships with the repository: 35 layers and one
+`figure.json`, rendered by the browser alone.*
+
 ---
 
 ## Why not Spine, Live2D or Godot
@@ -222,6 +227,8 @@ the cheek weld to 0.49 px over the whole window.
 
 ### Rigging it, without editing the file
 
+![The studio: the layer list on the left, Pedro on the stage with the bones of his rig drawn over him, the settings cards on the right](docs/img/studio.png)
+
 Three columns: the layers on the left, the figure in the middle, its settings
 on the right. Both rails fold away with the two buttons at the top right, both
 can be dragged wider by the line beside them (arrow keys work too), and the
@@ -310,8 +317,8 @@ folder next to `player/idle.js`, and mount it:
 <div id="hero" style="width:100%;height:100vh"></div>
 <script src="player/idle.js"></script>
 <script>
-  fetch('priest/figure.json').then(function (r) { return r.json(); }).then(function (fig) {
-    var f = new IdleFigure(document.getElementById('hero'), fig, 'priest/');
+  fetch('pedro/figure.json').then(function (r) { return r.json(); }).then(function (fig) {
+    var f = new IdleFigure(document.getElementById('hero'), fig, 'pedro/');
     f.trackPointer();
     f.play();
   });
@@ -351,6 +358,8 @@ A single screenshot cannot prove movement, so the studio offers two views:
 - **Contact sheet** — 24 frames of the 8 second window in one image.
 - **Events** — a 30 second scan at 60 fps listing every blink and burst with
   its duration and spacing.
+
+![Contact sheet of Pedro: 24 frames of the review window in one image](docs/img/contact-sheet.png)
 
 The second one exists because the first one cannot see short events. Measured
 on the shipped figure at 0.5 ms resolution over 600 seconds: a blink holds the
