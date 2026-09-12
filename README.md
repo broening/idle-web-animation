@@ -149,6 +149,11 @@ a neck pivot and a gaze, `arm` a shoulder and a sway. **Cut** then splits the
 picture along your blobs and hands the parts to the same importer everything
 else goes through.
 
+![Marking the demo figure: a rough blob of colour on the head, each arm, and the torso, painted over the flat picture](docs/img/mark.webp)
+
+*One rough blob per part. The names — `kopf`, `arm-links`, `arm-rechts`,
+`poncho` — are the whole rig.*
+
 The boundary is not your blob, it comes out of the drawing: each blob spreads
 outwards and pays extra to cross an edge the picture already has. How far it
 may spread at all is the **reach** slider, and it is the setting that decides
@@ -161,6 +166,12 @@ you can take two limbs out of this picture and the others out of a different
 one. Marked close to their edges at a 24 px reach, the eight parts of `baer`
 came back at **0.9967 IoU** against the layers they were flattened from, in
 about two seconds.
+
+![The cut result shown as layer edges: each part a flat colour, the untouched 65 percent in grey](docs/img/cut.png)
+
+*The same four rough marks, cut. Each part is a flat colour; the grey is the
+**rest** layer, everything no mark reached. The **layer edges** switch under
+the stage draws this.*
 
 Three limits worth knowing before you start. A thin part next to a fat one
 has to be marked along its length, not with a dot. A bigger reach is not a
@@ -358,6 +369,12 @@ A single screenshot cannot prove movement, so the studio offers two views:
 - **Contact sheet** — 24 frames of the 8 second window in one image.
 - **Events** — a 30 second scan at 60 fps listing every blink and burst with
   its duration and spacing.
+
+The **layer edges** switch under the stage paints every layer as a flat
+colour, so a part cut as a rectangle, or one sitting on the wrong pixels,
+shows at once.
+
+![The demo figure with layer edges on: all 35 layers as flat colours](docs/img/layer-edges.png)
 
 ![Contact sheet of Pedro: 24 frames of the review window in one image](docs/img/contact-sheet.png)
 
