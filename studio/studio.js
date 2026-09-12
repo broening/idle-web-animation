@@ -157,10 +157,16 @@
 
     /* Whatever was just mounted is, by definition, what is on disk. Every
      * later edit is measured against this string. */
-    if (!keepDirty) markClean();
+    if (!keepDirty) {
+      markClean();
+      resetHistory();
+    }
 
     state.images = null;
-    return Idle.loadImages(fig, base).then(function (imgs) { state.images = imgs; });
+    var mine = ++imageLoads;
+    return Idle.loadImages(fig, base).then(function (imgs) {
+      if (mine === imageLoads) state.images = imgs;
+    });
   }
 
   function loadFigure(name) {
@@ -358,6 +364,148 @@
       .catch(showError);
   }
 
+  /* ------------------------------------------------------------------ *
+   * Undo.
+   *
+   * The figure is one JSON text, and isDirty() already compares that text,
+   * so the history is simply a stack of those texts. Nothing has to be
+   * threaded through the thirty-odd places that edit the figure: a step is
+   * taken whenever the text has changed and the pointer is not held down,
+   * which makes a whole slider drag or pivot drag one step, not a hundred.
+   *
+   * The history starts fresh with every figure that comes off the disk, and
+   * after anything that deleted files: undoing a removed layer would bring
+   * back a layer whose image is gone.
+   * ------------------------------------------------------------------ */
+  var HISTORY_MAX = 100;
+  var undos = { past: [], future: [], top: '' };
+  var pressed = false;   /* a button is held somewhere on the page */
+  var imageLoads = 0;    /* the last restore()'s image load wins */
+
+  function resetHistory() {
+    undos.past = [];
+    undos.future = [];
+    undos.top = state.figure ? figureJson() : '';
+    refreshUndoState();
+  }
+
+  function checkpoint() {
+    if (!state.figure || pressed) return;
+    var now = figureJson();
+    if (now === undos.top) return;
+    if (undos.top) undos.past.push(undos.top);
+    if (undos.past.length > HISTORY_MAX) undos.past.shift();
+    undos.future = [];
+    undos.top = now;
+    refreshUndoState();
+  }
+
+  function refreshUndoState() {
+    $('undoBtn').disabled = !undos.past.length;
+    $('redoBtn').disabled = !undos.future.length;
+  }
+
+  function imagePaths(f) {
+    var out = [(f && f.background) || ''];
+    var layers = (f && f.layers) || [];
+    for (var i = 0; i < layers.length; i++) {
+      var L = layers[i];
+      out.push(L.id + '=' + ((L.frames && L.frames.length) ? L.frames.join('|') : L.src));
+    }
+    return out.join('\n');
+  }
+
+  /* Put a stored text back without remounting. mountFigure() would throw
+   * away the zoom, the selection and the marks; this keeps all three. */
+  function restore(text) {
+    var old = state.figure;
+    state.figure = JSON.parse(text);
+    undos.top = text;
+    /* A figure that only lives in this page is held in state.unsaved too,
+     * and switching away and back reads it from there. */
+    if (state.unsaved[state.name] === old) state.unsaved[state.name] = state.figure;
+    if (!selectedLayer()) state.selected = null;
+
+    rebuildStage();
+    buildLayerList();
+    buildLayerCard();
+    buildMotionControls();
+    refreshSaveState();
+    refreshUndoState();
+
+    /* The canvas work (contact sheet, export) needs the image bank to match
+     * the layers. Only reload it when the layers or their files changed. */
+    if (imagePaths(old) !== imagePaths(state.figure)) {
+      var mine = ++imageLoads;
+      state.images = null;
+      Idle.loadImages(state.figure, state.base)
+        .then(function (imgs) { if (mine === imageLoads) state.images = imgs; })
+        .catch(function (e) { say(String((e && e.message) || e)); });
+    }
+  }
+
+  function undo() {
+    /* An edit still settling is a step of its own, so it is what goes. */
+    checkpoint();
+    if (!undos.past.length) return;
+    undos.future.push(undos.top);
+    restore(undos.past.pop());
+  }
+
+  function redo() {
+    checkpoint();
+    if (!undos.future.length) return;
+    undos.past.push(undos.top);
+    restore(undos.future.pop());
+  }
+
+  /* Ctrl+Z inside a text box belongs to the text box. A slider or a
+   * checkbox has no undo of its own, so there it means the figure. */
+  function typingIn(el) {
+    if (!el || !el.tagName) return false;
+    if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
+    if (el.tagName !== 'INPUT') return false;
+    return !/^(range|checkbox|radio|button|color|file)$/i.test(el.type || 'text');
+  }
+
+  function bindUndo() {
+    window.addEventListener('keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      var k = (e.key || '').toLowerCase();
+      var back = k === 'z' && !e.shiftKey;
+      var fwd = k === 'y' || (k === 'z' && e.shiftKey);
+      if (!back && !fwd) return;
+      if (typingIn(e.target)) return;
+      e.preventDefault();
+      if (back) undo(); else redo();
+    });
+    $('undoBtn').addEventListener('click', undo);
+    $('redoBtn').addEventListener('click', redo);
+
+    /* Capture phase, so a handler that stops the event cannot hide it. */
+    window.addEventListener('pointerdown', function () { pressed = true; }, true);
+    function released() {
+      pressed = false;
+      /* After the page's own handlers have written their last value. */
+      setTimeout(checkpoint, 0);
+    }
+    window.addEventListener('pointerup', released, true);
+    window.addEventListener('pointercancel', released, true);
+    /* A drag let go outside the window may never send its pointerup. */
+    window.addEventListener('blur', released);
+    window.addEventListener('keyup', function () { setTimeout(checkpoint, 0); }, true);
+    window.addEventListener('change', function () { setTimeout(checkpoint, 0); }, true);
+
+    /* Closing the tab throws away unsaved edits and every figure that only
+     * lives in this page. The browser shows its own wording; a custom
+     * message has not been honoured for years. */
+    window.addEventListener('beforeunload', function (e) {
+      if (!isDirty() && !Object.keys(state.unsaved).length) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  }
+
   function registerFigure(name) {
     return fetch(FIGURES_ROOT + 'index.json')
       .then(function (r) { return r.ok ? r.json() : []; })
@@ -543,6 +691,7 @@
     state.hidden = {};
     state.images = null;
     state.saved = '';
+    resetHistory();
     marks.parts = [];
     if (marks.on) setMarkMode(false);
     clearPlace();
@@ -1182,6 +1331,10 @@
       return;
     }
 
+    /* The image files go next. Undo past this point would bring back a
+     * layer that points at nothing, so the history starts over here. */
+    resetHistory();
+
     say('removing ' + L.id + ' …');
     sourceFileFor(name, L.id)
       .then(function (files) {
@@ -1401,6 +1554,18 @@
             'a flipbook has nothing to switch between.'));
         }
 
+        /* fade out, or cut hard the instant life ends. Kept out of
+         * MOTION_PARAMS for the same reason as flipbook's mode: this is a
+         * word, not a number, and the agreement test excludes it the same
+         * way. */
+        if (m.type === 'drift') {
+          g.appendChild(picker('fade', m.fadeOut === false ? 'hard cut' : 'fade out',
+            ['fade out', 'hard cut'], null, function (v) {
+              m.fadeOut = (v !== 'hard cut');
+              refreshStill();
+            }));
+        }
+
         var known = MOTION_PARAMS[m.type] || {};
         var keys = [], seen = {};
         for (var k in known) {
@@ -1425,6 +1590,15 @@
         box.appendChild(g);
       })(ms[i], i);
     }
+
+    /* Filled by updatePeriodWarning(), which refreshStill() calls on every
+     * slider step - rebuilding the card there would drop the slider out from
+     * under the pointer. */
+    var clash = document.createElement('p');
+    clash.id = 'periodWarn';
+    clash.className = 'hint tight clash';
+    box.appendChild(clash);
+    updatePeriodWarning();
 
     /* Add a block. Only the types this layer does not carry yet: two blinks
      * on one layer read the same clock and fire as one event, and two drifts
@@ -1508,6 +1682,90 @@
   function refreshStill() {
     if (state.fig && !state.fig.playing) state.fig.render(state.fig.time);
     drawOverlay();
+    updatePeriodWarning();
+  }
+
+  /* period clash check */
+  /* Two parts on one period move as one mechanism: their peaks keep the same
+   * distance forever, so the eye reads a single pulse instead of two things
+   * alive. The same goes for an exact double - 4.0 against 8.0 locks, 4.0
+   * against 7.5 does not (principle 8, figure-json.md "Three rules").
+   *
+   * Every motion that has a `period` counts, on any layer, whatever its type:
+   * a chest breathing at 4.0 and a cloak swaying at 4.0 lock just the same.
+   * A missing or unusable period is the engine's default, because that is
+   * what runs. A block at strength 0 does not move and does not count.
+   *
+   * gaze against gaze is left out. Its period is the idle wander of the
+   * look, and two pupils - or a head and the eyes in it - are meant to look
+   * the same way at the same time. Pedro's pupils share 9.7 s on purpose.
+   *
+   * Pure on purpose, and handed the defaults rather than reading
+   * MOTION_PARAMS, so tools/test-agreement.mjs can lift it out and run it. */
+  function periodClashes(figure, layerId, params) {
+    var layers = (figure && figure.layers) || [];
+    var all = [], mine = [];
+    for (var i = 0; i < layers.length; i++) {
+      var ms = (layers[i] && layers[i].motions) || [];
+      for (var j = 0; j < ms.length; j++) {
+        var m = ms[j];
+        var d = m && params[m.type];
+        if (!d || !Object.prototype.hasOwnProperty.call(d, 'period')) continue;
+        if (m.strength === 0) continue;
+        var p = (typeof m.period === 'number' && m.period > 0) ? m.period : d.period;
+        var e = { id: layers[i].id, type: m.type, period: p, n: all.length };
+        all.push(e);
+        if (layers[i].id === layerId) mine.push(e);
+      }
+    }
+    var out = [], seen = {};
+    for (i = 0; i < mine.length; i++) {
+      for (j = 0; j < all.length; j++) {
+        var a = mine[i], b = all[j];
+        if (a.n === b.n) continue;
+        if (a.type === 'gaze' && b.type === 'gaze') continue;
+        var r = Math.max(a.period, b.period) / Math.min(a.period, b.period);
+        /* Within 1 %. The Kriegerin's apron fibres step 5.5, 5.9, 6.1, 6.4
+         * on purpose so they fan out; 2 % flagged half of them. 6.8 against
+         * 6.85 is still caught - that pair drifts apart once in 15 minutes. */
+        var kind = r < 1.01 ? 'same' : (Math.abs(r - 2) < 0.02 ? 'double' : null);
+        /* Two blocks on the selected layer meet twice, once from each side.
+         * One pair, one mention. */
+        var key = b.id === layerId
+          ? kind + '|own|' + Math.min(a.n, b.n) + '|' + Math.max(a.n, b.n)
+          : kind + '|' + b.id + '|' + b.type;
+        if (!kind || seen[key]) continue;
+        seen[key] = 1;
+        out.push({ kind: kind, id: b.id, type: b.type, period: b.period,
+                   own: b.id === layerId });
+      }
+    }
+    return out;
+  }
+  /* end of the period clash check */
+
+  function updatePeriodWarning() {
+    var el = $('periodWarn');
+    if (!el) return;
+    var list = state.figure
+      ? periodClashes(state.figure, state.selected, MOTION_PARAMS) : [];
+    function names(kind) {
+      var hit = list.filter(function (c) { return c.kind === kind; });
+      var shown = hit.slice(0, 3).map(function (c) {
+        /* Two decimals, one trailing zero dropped: 7.5, 4.0, 6.85. A plain
+         * toFixed(1) printed 6.85 as "6.8" and the pair looked identical. */
+        return (c.own ? 'its own ' : c.id + ' ') + '(' + c.type + ' ' +
+               c.period.toFixed(2).replace(/0$/, '') + ' s)';
+      });
+      if (hit.length > 3) shown.push('+' + (hit.length - 3) + ' more');
+      return shown.join(', ');
+    }
+    var lines = [];
+    var same = names('same'), dbl = names('double');
+    if (same) lines.push('Same period as ' + same + ' - they move in step.');
+    if (dbl) lines.push('Double or half the period of ' + dbl + ' - they lock together.');
+    el.textContent = lines.join(' ');
+    el.hidden = !lines.length;
   }
 
   /* ================================================================== *
@@ -1698,6 +1956,41 @@
     var m = viewMap();
     var w = m.w, h = m.h;
     var layers = f.layers || [];
+
+    /* Bones: a line from every joint to its parent's joint, under the dots.
+     * A wrong parent shows as a line to the wrong place, and a pivot that
+     * sits off its joint shows as a bone that does not follow the body.
+     * The selected layer's chain up to the root is drawn bright, the rest
+     * faint. Display only - nothing here writes to the figure. */
+    /* No prototype: a layer called "constructor" must not find one. */
+    var joint = [], parentOf = Object.create(null);
+    for (var b = 0; b < layers.length; b++) {
+      var pv = layers[b].pivot || [0.5, 0.5];
+      joint[b] = project(m, pv[0] * w, pv[1] * h);
+      /* First layer wins on a duplicate id, as the parent lookup does. */
+      if (!(layers[b].id in parentOf)) parentOf[layers[b].id] = b;
+    }
+    /* The walk up stops at a missing parent and at a ring. */
+    var lit = Object.create(null);
+    for (var id = state.selected; id in parentOf && !lit[id]; id = layers[parentOf[id]].parent) {
+      lit[id] = true;
+    }
+    g.lineCap = 'round';
+    for (var pass = 0; pass < 2; pass++) {
+      /* Faint first, bright on top, so a busy rig cannot hide the chain. */
+      g.strokeStyle = pass ? 'rgba(110,168,254,0.85)' : 'rgba(230,233,238,0.2)';
+      g.lineWidth = (pass ? 2 : 1) * m.dpr;
+      g.beginPath();
+      for (b = 0; b < layers.length; b++) {
+        var par = layers[b].parent;
+        if (!(par in parentOf) || par === layers[b].id) continue;
+        if (!!lit[layers[b].id] !== !!pass) continue;
+        var to = joint[parentOf[par]];
+        g.moveTo(joint[b][0], joint[b][1]);
+        g.lineTo(to[0], to[1]);
+      }
+      g.stroke();
+    }
 
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
@@ -2257,6 +2550,49 @@
     });
   }
 
+  /* The smallest rectangle of an image that paints anything, as
+   * [x0, y0, x1, y1] in the image's own pixels, x1/y1 exclusive, with a
+   * 2 px margin for soft edges. The same rule as the loading screen's
+   * tools/zuschneiden.py, so an export and that tool cut alike:
+   *
+   *   - visible means alpha above 0;
+   *   - under blend "screen" black disappears, so there it also has to be
+   *     brighter than 6 (the luma PIL's convert("L") uses: 299/587/114),
+   *     unless nothing at all passes that, in which case alpha decides;
+   *   - an image that paints nothing keeps a 1x1 box plus the margin, so
+   *     the layer stays in the tree and its children keep their parent. */
+  var CROP_MARGIN = 2;
+
+  function visibleBox(img, screen) {
+    var nw = img.naturalWidth, nh = img.naturalHeight;
+    var cv = document.createElement('canvas');
+    cv.width = nw; cv.height = nh;
+    var g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    var d = g.getImageData(0, 0, nw, nh).data;
+
+    function scan(lit) {
+      var x0 = nw, y0 = nh, x1 = -1, y1 = -1;
+      for (var y = 0; y < nh; y++) {
+        var row = y * nw * 4;
+        for (var x = 0; x < nw; x++) {
+          var o = row + x * 4;
+          if (!d[o + 3]) continue;
+          if (lit && d[o] * 299 + d[o + 1] * 587 + d[o + 2] * 114 <= 6000) continue;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          y1 = y;
+        }
+      }
+      return x1 < 0 ? null : [x0, y0, x1 + 1, y1 + 1];
+    }
+
+    var box = (screen && scan(true)) || scan(false) || [0, 0, 1, 1];
+    return [Math.max(0, box[0] - CROP_MARGIN), Math.max(0, box[1] - CROP_MARGIN),
+            Math.min(nw, box[2] + CROP_MARGIN), Math.min(nh, box[3] + CROP_MARGIN)];
+  }
+
   function exportFigure() {
     if (!state.images) return;
     var out = $('exportOut');
@@ -2269,53 +2605,123 @@
     var h = (src.size && src.size.height) || 1000;
     var scale = target ? target / w : 1;
 
-    var jobs = [];
     var files = [];
-    var seen = {};
     var renamed = {};
     var base = state.base || '';
-
-    function addImage(path, img) {
-      if (seen[path]) return;
-      seen[path] = 1;
-
-      /* At master size, copy the original bytes. Re-encoding an already
-       * lossy WebP through a canvas at 0.92 loses a generation for nothing,
-       * and it also wrote WebP bytes under a .png name. */
-      if (scale === 1) {
-        jobs.push(fetch(Idle.resolveSrc(src, base, path))
-          .then(function (r) {
-            if (!r.ok) throw new Error(path + ': ' + r.status);
-            return r.arrayBuffer();
-          })
-          .then(function (ab) { files.push({ name: path, data: new Uint8Array(ab) }); }));
-        return;
-      }
-
-      var cw = Math.max(1, Math.round(img.naturalWidth * scale));
-      var chh = Math.max(1, Math.round(img.naturalHeight * scale));
-      var cv = document.createElement('canvas');
-      cv.width = cw; cv.height = chh;
-      var g = cv.getContext('2d');
-      g.imageSmoothingQuality = 'high';
-      g.drawImage(img, 0, 0, cw, chh);
-      /* Below master everything becomes WebP, so the path has to say so. */
-      var out8 = path.replace(/\.[^.\/]+$/, '.webp');
-      jobs.push(canvasToU8(cv, 'image/webp', 0.92).then(function (u8) {
-        files.push({ name: out8, data: u8 });
-        if (out8 !== path) renamed[path] = out8;
-      }));
-    }
-
-    if (src.background && state.images._bg) addImage(src.background, state.images._bg);
     var layers = src.layers || [];
+
+    /* Every layer image ships cut to the rectangle it paints, and figure.json
+     * says where that rectangle sits (`crop` / `crops`, read by cropOf in
+     * idle.js). The layer box stays the full canvas, so nothing about the rig
+     * changes - only the decoded memory does, which on the loading screen
+     * went from 547 MB to 34 MB across all figures.
+     *
+     * Per file, not per layer: two layers showing one file share one cut.
+     * A file counts as screen-only when every layer using it is screen. */
+    var uses = {}, order = [];
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
       var srcs = (L.frames && L.frames.length) ? L.frames : [L.src];
       var bank = state.images[L.id] || [];
       for (var k = 0; k < srcs.length; k++) {
-        if (bank[k]) addImage(srcs[k], bank[k]);
+        if (!srcs[k] || !bank[k]) continue;
+        var u = uses[srcs[k]];
+        if (!u) {
+          /* Where the file sits on the canvas now: all of it, or the crop it
+           * already carries if this figure was cut before. */
+          u = uses[srcs[k]] = { img: bank[k], screen: true,
+                                place: Idle.cropOf(L, k) || [0, 0, w, h] };
+          order.push(srcs[k]);
+        }
+        if (L.blend !== 'screen') u.screen = false;
       }
+    }
+
+    /* Per axis, because the exported height is rounded: Pedro at 1000 is
+     * 1000 x 558, not 1000 x 558.04. With one factor for both, a part that
+     * reached the bottom edge got a rectangle one pixel past the canvas and
+     * a half-transparent last row. The epsilon keeps 1000 * 0.558 from
+     * rounding up to 559. */
+    var sx = scale;
+    var sy = target ? Math.round(h * scale) / h : 1;
+    var EPS = 1e-6;
+
+    var cropOfPath = {};
+    var before = 0, after = 0;
+    /* Lossy WebP either way. At master 0.94, the quality zuschneiden.py
+     * uses; below master 0.92 as before. The master used to copy the
+     * original bytes, but a cut file is a new file and has to be encoded. */
+    var quality = scale === 1 ? 0.94 : 0.92;
+
+    function cutOne(path) {
+      var u = uses[path];
+      var img = u.img, P = u.place;
+      var kx = P[2] / img.naturalWidth, ky = P[3] / img.naturalHeight;
+      var b = visibleBox(img, u.screen);
+      /* The painted part in figure-canvas pixels, then in export pixels,
+       * rounded outwards so no painted pixel falls off the edge. */
+      var cx = P[0] + b[0] * kx, cy = P[1] + b[1] * ky;
+      var cw = (b[2] - b[0]) * kx, ch = (b[3] - b[1]) * ky;
+      var ox = Math.floor(cx * sx + EPS), oy = Math.floor(cy * sy + EPS);
+      var ow = Math.max(1, Math.ceil((cx + cw) * sx - EPS) - ox);
+      var oh = Math.max(1, Math.ceil((cy + ch) * sy - EPS) - oy);
+
+      var cv = document.createElement('canvas');
+      cv.width = ow; cv.height = oh;
+      var g = cv.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      /* The source rectangle is the export rectangle mapped back into the
+       * image, so the rounding above moves no pixel. At master it is an
+       * exact integer copy. */
+      g.drawImage(img, (ox / sx - P[0]) / kx, (oy / sy - P[1]) / ky,
+                  ow / sx / kx, oh / sy / ky, 0, 0, ow, oh);
+
+      cropOfPath[path] = [ox, oy, ow, oh];
+      before += Math.round(P[2] * sx) * Math.round(P[3] * sy) * 4;
+      after += ow * oh * 4;
+
+      var out8 = path.replace(/\.[^.\/]+$/, '.webp');
+      if (out8 !== path) renamed[path] = out8;
+      return canvasToU8(cv, 'image/webp', quality).then(function (u8) {
+        files.push({ name: out8, data: u8 });
+      });
+    }
+
+    /* One file at a time, with a breath between, so the page can say how
+     * far it got instead of freezing for the length of a big figure. */
+    var chain = Promise.resolve();
+    order.forEach(function (path, n) {
+      chain = chain.then(function () {
+        out.textContent = 'cutting ' + (n + 1) + ' of ' + order.length + ' ...';
+        return new Promise(function (res) { setTimeout(res, 0); });
+      }).then(function () { return cutOne(path); });
+    });
+
+    /* The backdrop is not a layer: it covers the host and is never cut. At
+     * master it keeps its original bytes, below master it is scaled. */
+    if (src.background && state.images._bg) {
+      var bgPath = src.background, bgImg = state.images._bg;
+      chain = chain.then(function () {
+        if (scale === 1) {
+          return fetch(Idle.resolveSrc(src, base, bgPath))
+            .then(function (r) {
+              if (!r.ok) throw new Error(bgPath + ': ' + r.status);
+              return r.arrayBuffer();
+            })
+            .then(function (ab) { files.push({ name: bgPath, data: new Uint8Array(ab) }); });
+        }
+        var cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(bgImg.naturalWidth * scale));
+        cv.height = Math.max(1, Math.round(bgImg.naturalHeight * scale));
+        var g = cv.getContext('2d');
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(bgImg, 0, 0, cv.width, cv.height);
+        var out8 = bgPath.replace(/\.[^.\/]+$/, '.webp');
+        if (out8 !== bgPath) renamed[bgPath] = out8;
+        return canvasToU8(cv, 'image/webp', 0.92).then(function (u8) {
+          files.push({ name: out8, data: u8 });
+        });
+      });
     }
 
     if (target) {
@@ -2326,23 +2732,27 @@
       f.size = { width: target, height: Math.round(h * scale) };
     }
     delete f.sources;
-    /* Keep the JSON pointing at the names actually written. */
-    if (f.background && renamed[f.background]) f.background = renamed[f.background];
-    for (var q = 0; q < (f.layers || []).length; q++) {
-      var FL = f.layers[q];
-      if (FL.src && renamed[FL.src]) FL.src = renamed[FL.src];
-      if (FL.frames) {
-        for (var r2 = 0; r2 < FL.frames.length; r2++) {
-          if (renamed[FL.frames[r2]]) FL.frames[r2] = renamed[FL.frames[r2]];
+
+    chain.then(function () {
+      /* Write the rectangles, then point the JSON at the names actually
+       * written. crops runs parallel to frames; a src layer gets one crop. */
+      if (f.background && renamed[f.background]) f.background = renamed[f.background];
+      for (var q = 0; q < (f.layers || []).length; q++) {
+        var FL = f.layers[q];
+        delete FL.crop;
+        delete FL.crops;
+        if (FL.frames && FL.frames.length) {
+          var rects = FL.frames.map(function (p) { return cropOfPath[p] || null; });
+          if (rects.every(Boolean)) FL.crops = rects;
+          FL.frames = FL.frames.map(function (p) { return renamed[p] || p; });
+        } else if (FL.src) {
+          if (cropOfPath[FL.src]) FL.crop = cropOfPath[FL.src];
+          if (renamed[FL.src]) FL.src = renamed[FL.src];
         }
       }
-    }
 
-    Promise.all(jobs).then(function () {
       var enc = new TextEncoder();
       files.push({ name: 'figure.json', data: enc.encode(JSON.stringify(f, null, 2)) });
-      files.push({ name: 'idle.js', data: null });
-      files.pop();  /* the player is shipped once, not per figure */
       var blob = makeZip(files);
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -2352,7 +2762,9 @@
       a.click();
       document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-      out.textContent = files.length + ' files, ' + Math.round(blob.size / 1024) + ' KB';
+      var mb = function (n) { return (n / 1048576).toFixed(1) + ' MB'; };
+      out.textContent = files.length + ' files, ' + Math.round(blob.size / 1024) +
+        ' KB. Decoded layers ' + mb(before) + ' -> ' + mb(after) + '.';
     }).catch(function (e) {
       out.textContent = 'Export fehlgeschlagen: ' + ((e && e.message) || e);
     });
@@ -3529,6 +3941,7 @@
     bindPlacing();
     bindPivotDrag();
     bindNudgeKeys();
+    bindUndo();
 
     /* Pointer tracking is bound once, to the overlay, and forwarded to
      * whichever figure is mounted. Calling figure.trackPointer() on every
@@ -3626,6 +4039,14 @@
     });
 
     $('figureSel').addEventListener('change', function () {
+      /* Loading another figure replaces this one, edits and undo history
+       * with it. A figure that only lives in this page keeps its edits in
+       * state.unsaved, so only one that came off the disk can lose them. */
+      if (onDisk() && isDirty() && !window.confirm(
+          'Throw the unsaved changes to "' + state.name + '" away?')) {
+        this.value = state.name;
+        return;
+      }
       if (this.value.indexOf(UNSAVED) === 0) {
         var u = state.unsaved[this.value.slice(UNSAVED.length)];
         if (u) mountFigure(u.name, u, '');
@@ -3744,7 +4165,12 @@
     /* Dirtiness is worked out by serialising the figure, which is cheap but
      * not free. Twice a second is well under what anyone notices and does not
      * put a JSON.stringify inside the animation loop. */
-    window.setInterval(refreshSaveState, 500);
+    window.setInterval(function () {
+      /* The safety net for undo: an edit that arrived without a pointer,
+       * key or change event behind it still becomes a step. */
+      checkpoint();
+      refreshSaveState();
+    }, 500);
 
     probeServer();
 

@@ -45,9 +45,11 @@
   pointer-events: none;
 }
 
-/* Every layer is a full-canvas transparent image. No offsets, no cropping,
- * no per-layer geometry to keep in sync - the pivot alone decides how it
- * moves. That is why the JSON stays short enough to read. */
+/* Every layer box is the full canvas, and the pivot alone decides how it
+ * moves. The image inside fills the box too, unless the figure carries a
+ * `crop` for it: then idle.js pins the smaller image to its rectangle with
+ * inline left/top/width/height, which beat the 100% above. The box never
+ * changes, so pivots and parents do not care whether a layer was cut. */
 /* `filter` is deliberately not in this list. A hint is cheap, but an actual
  * filter is not: it forces the layer onto its own render surface, which is a
  * whole extra render pass every frame. Grim is 22 full-canvas layers, and for

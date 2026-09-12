@@ -644,6 +644,7 @@ html, body {
 }
 
 .hint.tight { margin: 6px 0 0; }
+.hint.clash { color: var(--warn); margin: 0 0 10px; }
 
 /* ------------------------------------------------------------------ *
  * Layer list: a grip to drag by, an eye to switch off.

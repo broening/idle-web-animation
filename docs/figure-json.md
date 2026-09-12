@@ -17,7 +17,7 @@ keyframes.
 
 | Field | Meaning |
 |---|---|
-| `size` | The canvas every layer shares. Layers are never cropped: each one is a full-canvas image, so a layer sits where its pixels are. `offset` corrects a part that was cut a few pixels off; nothing else displaces a layer. |
+| `size` | The canvas every layer shares. Each layer is a full-canvas box, so a layer sits where its pixels are. The figures you author are full-canvas images too; an exported figure carries smaller files plus a `crop` that puts them back in place. `offset` corrects a part that was cut a few pixels off; nothing else displaces a layer. |
 | `background` | Optional backdrop. It fills the host element, not the figure canvas, because a backdrop is rarely the same shape as the character. |
 | `backgroundZoom` | Scale for the backdrop, e.g. `1.18`. |
 | `motion.windowSeconds` | The review window. The contact sheet samples this span. It is **not** a loop period — see `principles.md`. Read by the studio only; the player ignores it. |
@@ -57,6 +57,8 @@ keyframes.
 | `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |
 | `alt` | Alt text for the `<img>`. Cosmetic, but free. |
 | `opacity` | Base opacity, clamped to 0…1. Out-of-range values used to make the DOM layer invisible and the canvas layer opaque — two different results from one file. |
+| `crop` | `[x, y, width, height]` in canvas pixels: where a `src` image sits when the file is smaller than the canvas. The layer box stays the full canvas, so pivot and parent do not change. The studio's **Export** writes it; do not write it by hand. Anything but four numbers with a positive size is ignored. |
+| `crops` | The same for a `frames` layer, one rectangle per frame. It wins over `crop`; a frame it does not cover is shown at full canvas. |
 
 `name` and `note` at the top level are for people. The player never reads
 them; the studio takes a figure's name from its folder.
@@ -80,8 +82,11 @@ chain freezes the tab — the engine walks the chain on every frame. And the
 offered: it is the one value that would make the contact sheet disagree with
 the page.
 
-What is **not** in the panel: creating, deleting or renaming a layer, and the
-`frames` list. Those still want the file, or `tools/import-layers.py`. The
+Layers come and go in the studio too. **Upload parts…** and the **Place**
+card add them. **Remove this layer** in the Layer card deletes one, together
+with its image files, and saves. What is **not** in the panel: renaming a
+layer, and the `frames` list. Those still want the file, or
+`tools/import-layers.py`. The
 JSON card's **Apply** button is the way in — it reads the box back into the
 figure and refuses bad JSON, a parent that is not a layer, a parent loop and a
 duplicate id. Nothing is written to disk until **Save**.
@@ -125,6 +130,11 @@ round, the way a layer palette does.
   eighth and out over the last half, and is not drawn at all between rises.
   `every` is the gap between rises, `jitter` spreads their start, `wander`
   is a slow sideways waver, and `phase` shifts the whole schedule.
+  `fadeOut: false` drops the fade-out: the layer still fades in over the
+  first eighth so the spawn does not pop, but then holds at full opacity and
+  cuts out the instant `life` ends, instead of softening over the last half.
+  Right for a drip that has to disappear at a hard edge - a mouth, a
+  floor - rather than dissolve mid-air.
 
 Several motions can sit on one layer; they add up. A hand can `sway` and
 `glow` at the same time.
@@ -231,8 +241,11 @@ sheet shows is what the page shows.
 2. **Keep periods apart between independent systems.** A cloak and a chest
    should not share one — 4.0 and 8.0 visibly lock together, 4.0 and 7.5 do
    not. But a chest and a belly *should* be close: they are one pair of
-   lungs, and forcing them apart looks wrong. The engine does not check this;
-   it is the author's job. See principle 8 in `principles.md`.
+   lungs, and forcing them apart looks wrong. The engine does not stop you;
+   the studio's Motion card warns when the selected layer shares a period
+   with another, or sits at exactly double or half of one. Whether that pair
+   should move as one is still the author's call. See principle 8 in
+   `principles.md`.
 3. **Anything that ends up in a divisor must be greater than zero.** A
    `period: 0` or an `interval: 0` is rejected and the default is used.
    Earlier they produced a figure made of `NaN`, and `interval: 0` froze the

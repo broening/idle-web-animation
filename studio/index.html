@@ -38,6 +38,10 @@
 
     <span class="sep" aria-hidden="true"></span>
 
+    <button id="undoBtn" class="btn ghost" type="button" disabled
+            title="Ctrl+Z">Undo</button>
+    <button id="redoBtn" class="btn ghost" type="button" disabled
+            title="Ctrl+Y or Ctrl+Shift+Z">Redo</button>
     <button id="saveBtn" class="btn primary" type="button">Save</button>
     <button id="resetBtn" class="btn ghost" type="button">Reset</button>
     <button id="deleteFigureBtn" class="btn" type="button"
@@ -310,6 +314,10 @@
         <p id="exportOut" class="out"></p>
         <p class="hint">Master layers stay at full resolution. Pick the size
         the target wants and take a zip.</p>
+        <p class="hint">Every layer is cut to the part it paints, and
+        <code>figure.json</code> gets a <code>crop</code> saying where that
+        part sits. The rig does not change; the decoded memory drops by an
+        order of magnitude. The figures in this folder stay uncut.</p>
       </details>
 
       <details class="card">

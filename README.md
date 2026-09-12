@@ -39,7 +39,7 @@ The engine here is 768 non-blank lines.
 ```
 player/
   idle.js      the engine: 8 motion blocks, solve(), DOM and canvas renderers
-  idle.css     the layout contract - a figure is a stack of full-canvas images
+  idle.css     the layout contract - a figure is a stack of full-canvas layers
 studio/
   index.html   authoring and checking surface
   studio.js    pivot dragging, the layer and motion cards, contact sheet,
@@ -230,13 +230,22 @@ opened to build one.
   off.
 - **Motion card** — add or remove a motion block. Each of the eight types once
   per layer: two blinks on one layer read the same clock and fire as one, and
-  two drifts make the layer jump between rises.
+  two drifts make the layer jump between rises. Below the blocks it warns
+  when the selected layer shares a period with another layer, or sits at
+  exactly double or half of one: two parts on one period move as one.
+- **Bones** — with **pivots** on, a line runs from every joint to its
+  parent's joint. The selected layer's chain up to the root is bright, the
+  rest faint, so a wrong parent or a joint in the wrong place shows at once.
 - **JSON card** — **Apply** reads the box back into the figure, for the rare
   thing no knob covers. Bad JSON, a parent that is not a layer, a parent loop
   and a duplicate id are refused and nothing changes.
 
 Nothing in the panel touches the disk. **Save** does that, and Reset throws
-the lot away.
+the lot away. **Undo** and **Redo** (`Ctrl+Z`, `Ctrl+Y` or
+`Ctrl+Shift+Z`) step through every edit since the figure was loaded; a
+whole slider or pivot drag is one step. Removing a layer deletes files, so
+the history starts over there. Closing the tab with unsaved edits, or with
+a figure that only lives in the page, asks first.
 
 ### After you repaint a layer
 

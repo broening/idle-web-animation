@@ -310,8 +310,17 @@
        * painted, so while it is still fading in it is also still sitting on
        * the source it came from - and a long fade-in leaves that source bare,
        * because every group has already climbed away from it before any of
-       * them is visible. A fifth left a hole at the hand; an eighth does not. */
-      out.opacity *= clamp(Math.min(u / 0.125, (1 - u) / 0.5, 1), 0, 1);
+       * them is visible. A fifth left a hole at the hand; an eighth does not.
+       *
+       * `fadeOut: false` drops the second term: a drip that has to vanish at
+       * a hard edge - the mouth it fell out of, the floor it hit - looks
+       * wrong going soft first. It still fades in, so the spawn itself does
+       * not pop, and it still stops being drawn the instant life ends
+       * (the dt < 0 branch above), so the cut is clean rather than a hold. */
+      var fadeOut = cfg.fadeOut !== false;
+      out.opacity *= fadeOut
+        ? clamp(Math.min(u / 0.125, (1 - u) / 0.5, 1), 0, 1)
+        : clamp(u / 0.125, 0, 1);
     },
 
     /* Light that lives: a lantern, a rune, an eye. Brightness and opacity
@@ -346,6 +355,39 @@
     if (st.frame === -1) return -1;      /* flipbook says: not now */
     if (st.frame < 0) return 0;          /* frames but no flipbook motion */
     return st.frame % n;
+  }
+
+  /* Where an image sits on the canvas, as [x, y, width, height] in canvas
+   * pixels - or null for an image that ships as a full canvas.
+   *
+   * A full-canvas layer costs width * height * 4 bytes of decoded pixels no
+   * matter how little of it is painted. Pedro is 1792x1000, so every one of
+   * his sixty files is 7.2 MB decoded and the figure alone is 410 MB. Cut to
+   * the painted rectangle they come to 14 MB. That is the difference between
+   * a machine that holds the whole scene and one that keeps throwing images
+   * out and decoding them again - which is what a decode burst mid-load
+   * sounds like on the loading screen: the music stalls.
+   *
+   * The layer box stays the full canvas, so pivots, parents and every matrix
+   * in solve() are untouched. Only the image inside it moves and shrinks.
+   *
+   * `crops` runs parallel to `frames` and wins whenever it is there, even for
+   * an index it does not cover. `crop` is the one rectangle of a `src` layer.
+   * The studio's export writes both; nobody should have to by hand.
+   *
+   * Anything that is not four finite numbers with a positive size counts as
+   * no crop at all. Without that check the two renderers split again: the
+   * DOM dropped a bad value like "undefinedpx" and showed the image full
+   * size, while drawImage got NaN and drew nothing. */
+  function cropOf(layer, index) {
+    var r = layer.crops ? (Array.isArray(layer.crops) ? layer.crops[index] : null)
+                        : layer.crop;
+    if (!Array.isArray(r) || r.length !== 4) return null;
+    for (var i = 0; i < 4; i++) {
+      if (typeof r[i] !== 'number' || !isFinite(r[i])) return null;
+    }
+    if (r[2] <= 0 || r[3] <= 0) return null;
+    return r;
   }
 
   /* CSS mix-blend-mode and canvas globalCompositeOperation share most names
@@ -622,6 +664,19 @@
         img.src = resolveSrc(f, this.base, srcs[k]);
         img.alt = L.alt || '';
         img.draggable = false;
+        /* Decode off the main thread. Sixty layers decoding in one go on the
+         * main thread is a visible hitch at load. */
+        img.decoding = 'async';
+        /* A cropped file is smaller than the canvas, so idle.css's blanket
+         * 100%/100% would stretch it. Pin it back to the rectangle it was
+         * cut from. Layers without a crop keep the full-canvas behaviour. */
+        var cr = cropOf(L, k);
+        if (cr) {
+          img.style.left = cr[0] + 'px';
+          img.style.top = cr[1] + 'px';
+          img.style.width = cr[2] + 'px';
+          img.style.height = cr[3] + 'px';
+        }
         /* Any frames array starts hidden, even a one-entry one: a burst
          * flipbook must be able to switch it off between bursts. */
         if (hasFrames) img.style.visibility = 'hidden';
@@ -792,12 +847,18 @@
       self.pointerY = clamp(((e.clientY - r.top) / r.height) * 2 - 1, -1, 1);
     }
     function leave() { self.pointerX = 0; self.pointerY = 0; }
-    el.addEventListener('mousemove', move);
-    el.addEventListener('mouseleave', leave);
-    /* Remembered so destroy() can actually take them off again. Anonymous
-     * closures could never be removed, so repeated calls piled up. */
-    this._bound.push({ el: el, type: 'mousemove', fn: move });
-    this._bound.push({ el: el, type: 'mouseleave', fn: leave });
+    /* Pointer events, not mouse events: a finger never sends a mousemove
+     * while it drags, so touch got no gaze at all. A finger lifting fires
+     * pointerleave, which recentres; pointercancel is the browser taking
+     * the gesture over for a scroll. touch-action is left alone on purpose -
+     * setting it would stop the page scrolling under the figure. */
+    var types = { pointermove: move, pointerleave: leave, pointercancel: leave };
+    for (var type in types) {
+      el.addEventListener(type, types[type]);
+      /* Remembered so destroy() can actually take them off again. Anonymous
+       * closures could never be removed, so repeated calls piled up. */
+      this._bound.push({ el: el, type: type, fn: types[type] });
+    }
   };
 
   /* ------------------------------------------------------------------ *
@@ -900,7 +961,11 @@
       /* Fit transform: scale by k and offset, then the layer's own matrix. */
       g.setTransform(k * m[0], k * m[1], k * m[2], k * m[3],
                      k * m[4] + ox, k * m[5] + oy);
-      g.drawImage(img, 0, 0, w, h);
+      /* The same rectangle the DOM renderer pins the <img> to, so the
+       * contact sheet keeps matching the page. */
+      var cr = cropOf(L, fi);
+      if (cr) g.drawImage(img, cr[0], cr[1], cr[2], cr[3]);
+      else g.drawImage(img, 0, 0, w, h);
       g.restore();
       if ('filter' in g) g.filter = 'none';
     }
@@ -912,6 +977,7 @@
     IdleFigure: IdleFigure,
     solve: solve,
     frameOf: frameOf,
+    cropOf: cropOf,
     resolveSrc: resolveSrc,
     canvasBlend: canvasBlend,
     loadImages: loadImages,

@@ -125,6 +125,7 @@ for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow', 'cha
   const body = motionsBlock.slice(i, motionsBlock.indexOf('},', i));
   const read = new Set([...body.matchAll(/cfg\.([a-zA-Z]+)/g)].map(m => m[1]));
   read.delete('mode');
+  read.delete('fadeOut');
 
   const row = paramsBlock.match(new RegExp(name + '\\s*:\\s*\\{([^}]*)\\}'));
   if (!row) fail(`Baustein ${name} fehlt in MOTION_PARAMS des Studios`);
@@ -277,6 +278,63 @@ for (const w of fallback) {
 }
 console.log(`Teilwoerter: ${echteWorte.size} aus dem Importer, Notliste deckt sie.`);
 
+/* --- 6e. the period clash warning ----------------------------------------
+ *
+ * Principle 8 said "the tool does not help yet". The Motion card now warns
+ * when two periods lock, and the rule behind the warning is held here. */
+
+const clashSrc = studio.slice(studio.indexOf('/* period clash check */'),
+                              studio.indexOf('/* end of the period clash check */'));
+if (!clashSrc) fail('periodClashes nicht zwischen seinen Markern gefunden');
+const { periodClashes } = new Function(clashSrc + '\nreturn { periodClashes };')();
+
+const P = (id, motions) => ({ id, src: id, motions });
+const pc = (layers, id) => periodClashes({ layers }, id, MP);
+const kinds = (layers, id) => pc(layers, id).map(c => c.kind + ':' + c.id).sort().join(',');
+
+for (const [label, layers, id, want] of [
+  ['4.0 gegen 4.0', [P('a', [{ type: 'breathe', period: 4 }]), P('b', [{ type: 'sway', period: 4 }])], 'a', 'same:b'],
+  ['4.0 gegen 8.0', [P('a', [{ type: 'breathe', period: 4 }]), P('b', [{ type: 'sway', period: 8 }])], 'a', 'double:b'],
+  ['8.0 gegen 4.0', [P('a', [{ type: 'sway', period: 8 }]), P('b', [{ type: 'breathe', period: 4 }])], 'a', 'double:b'],
+  ['4.0 gegen 7.5', [P('a', [{ type: 'breathe', period: 4 }]), P('b', [{ type: 'sway', period: 7.5 }])], 'a', ''],
+  ['6.85 gegen 6.8 ist gleich', [P('a', [{ type: 'sway', period: 6.85 }]), P('b', [{ type: 'sway', period: 6.8 }])], 'a', 'same:b'],
+  ['7.5 gegen 7.4 ist gestaffelt', [P('a', [{ type: 'sway', period: 7.5 }]), P('b', [{ type: 'sway', period: 7.4 }])], 'a', ''],
+  ['3.0 gegen 6.1 ist nicht doppelt', [P('a', [{ type: 'sway', period: 3 }]), P('b', [{ type: 'sway', period: 6.1 }])], 'a', ''],
+  ['fehlende Periode ist der Standard', [P('a', [{ type: 'breathe' }]), P('b', [{ type: 'glow', period: 4 }])], 'a', 'same:b'],
+  ['Periode 0 ist der Standard', [P('a', [{ type: 'breathe', period: 0 }]), P('b', [{ type: 'breathe' }])], 'a', 'same:b'],
+  ['Staerke 0 zaehlt nicht', [P('a', [{ type: 'breathe', period: 4 }]), P('b', [{ type: 'breathe', period: 4, strength: 0 }])], 'a', ''],
+  ['blink hat keine Periode', [P('a', [{ type: 'breathe', period: 4.2 }]), P('b', [{ type: 'blink', interval: 4.2 }])], 'a', ''],
+  ['eigene zweite Bewegung', [P('a', [{ type: 'breathe', period: 5.3 }, { type: 'glow' }])], 'a', 'same:a'],
+  ['nichts gewaehlt', [P('a', [{ type: 'breathe' }]), P('b', [{ type: 'breathe' }])], null, ''],
+  ['Ebene ohne Bewegung', [P('a', []), P('b', [{ type: 'breathe' }])], 'a', ''],
+  ['zwei Pupillen schauen zusammen', [P('a', [{ type: 'gaze', period: 9.7 }]), P('b', [{ type: 'gaze', period: 9.7 }])], 'a', ''],
+  ['gaze gegen sway zaehlt', [P('a', [{ type: 'gaze', period: 7.5 }]), P('b', [{ type: 'sway', period: 7.5 }])], 'a', 'same:b']
+]) {
+  const got = kinds(layers, id);
+  if (got !== want) fail(`periodClashes ${label}: erwartet "${want}", bekommen "${got}"`);
+  checks++;
+}
+
+/* Two real figures, when they are on this machine (figures/ is not in git).
+ * Kriegerin: the bear's head and the warrior's hair are two bodies and both
+ * sway at 7.5 s. Pedro: his pupils share a gaze period and must stay quiet. */
+const figPath = n => join(root, 'figures', n, 'figure.json');
+if (existsSync(figPath('kriegerin'))) {
+  const kf = JSON.parse(readFileSync(figPath('kriegerin'), 'utf8'));
+  if (!periodClashes(kf, 'bear-kopf', MP).some(c => c.kind === 'same' && c.id === 'krieger-kopf-haare')) {
+    fail('Kriegerin: bear-kopf und krieger-kopf-haare schwingen beide mit 7.5 s, die Warnung schweigt');
+  }
+  checks++;
+}
+if (existsSync(figPath('pedro'))) {
+  const pf = JSON.parse(readFileSync(figPath('pedro'), 'utf8'));
+  if (periodClashes(pf, 'pupille-links', MP).length) {
+    fail('Pedro: die Pupillen schauen gewollt zusammen, die Warnung meldet sie trotzdem');
+  }
+  checks++;
+}
+console.log('Perioden: gleich und doppelt werden gemeldet, 4.0 gegen 7.5 nicht.');
+
 /* --- 7. hostile input must not crash, hang or split the renderers -------- */
 
 const F = (layers, extra) => Object.assign(
@@ -380,6 +438,83 @@ for (const [life, every, jitter] of [[3.6, 5.17, 0.9], [3.0, 3.0, 1.0],
   }
   checks += 60 * 400;
 }
+
+/* --- 8. crop: one rectangle, the same for both renderers -----------------
+ *
+ * The loading screen's fork read crop without looking at it. A malformed
+ * value reached the DOM as "undefinedpx", which the browser drops, so the
+ * image showed at full size - and reached drawImage as NaN, which draws
+ * nothing. cropOf now decides once, and both renderers must ask it. */
+
+const R = [10, 20, 30, 40];
+const cropCases = [
+  ['crop auf src-Ebene', { src: 'a', crop: R }, 0, R],
+  ['crop gilt fuer jedes Bild', { frames: ['a', 'b'], crop: R }, 1, R],
+  ['crops gewinnt', { frames: ['a', 'b'], crop: [0, 0, 1, 1], crops: [R, [1, 2, 3, 4]] }, 1, [1, 2, 3, 4]],
+  ['crops ohne diesen Index', { frames: ['a', 'b'], crop: R, crops: [R] }, 1, null],
+  ['ohne crop', { src: 'a' }, 0, null],
+  ['crop als Objekt', { src: 'a', crop: { x: 1, y: 2, w: 3, h: 4 } }, 0, null],
+  ['crop mit 3 Zahlen', { src: 'a', crop: [1, 2, 3] }, 0, null],
+  ['crop mit NaN', { src: 'a', crop: [1, NaN, 3, 4] }, 0, null],
+  ['crop mit Text', { src: 'a', crop: ['1', 2, 3, 4] }, 0, null],
+  ['crop Breite 0', { src: 'a', crop: [1, 2, 0, 4] }, 0, null],
+  ['crop Hoehe negativ', { src: 'a', crop: [1, 2, 3, -4] }, 0, null],
+  ['crops kein Array', { frames: ['a'], crops: { 0: R } }, 0, null]
+];
+for (const [label, layer, idx, want] of cropCases) {
+  const got = Idle.cropOf(layer, idx);
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    fail(`cropOf ${label}: erwartet ${JSON.stringify(want)}, bekommen ${JSON.stringify(got)}`);
+  }
+  checks++;
+}
+
+/* Both renderers have to go through cropOf, or they split again. */
+const buildBody = (body.match(/IdleFigure\.prototype\._build = function[\s\S]*?\n  \};/) || [''])[0];
+const drawBody = (body.match(/function drawFrame[\s\S]*?\n  \}/) || [''])[0];
+if (!/cropOf\(L, k\)/.test(buildBody)) fail('_build fragt cropOf nicht - die Seite ignoriert crop');
+if (!/cropOf\(L, fi\)/.test(drawBody)) fail('drawFrame fragt cropOf nicht - der Bilderstreifen ignoriert crop');
+if (/\.crops?\b/.test(body.replace(/function cropOf[\s\S]*?\n  \}/, ''))) {
+  fail('crop wird ausserhalb von cropOf gelesen - eine zweite Meinung');
+}
+checks += 3;
+
+/* A cropped figure draws its image into the rectangle, an uncropped one
+ * across the whole canvas. Recorded on a fake context. */
+const calls = [];
+const g = {
+  setTransform() {}, clearRect() {}, save() {}, restore() {},
+  drawImage(img, x, y, w, h) { calls.push([img, x, y, w, h]); }
+};
+const cropFig = F([{ id: 'c', src: 'c', pivot: [0.5, 0.5], crop: R },
+                   { id: 'n', src: 'n', pivot: [0.5, 0.5] }]);
+Idle.drawFrame(g, cropFig, { _bg: null, c: ['IMG-C'], n: ['IMG-N'] }, 0, {});
+if (JSON.stringify(calls) !== JSON.stringify([['IMG-C', 10, 20, 30, 40], ['IMG-N', 0, 0, 100, 100]])) {
+  fail(`drawFrame zeichnet crop falsch: ${JSON.stringify(calls)}`);
+}
+checks++;
+console.log('crop: cropOf entscheidet allein, beide Zeichner fragen es.');
+
+/* --- 9. pointer input reaches touch too ---------------------------------- */
+
+const listened = {};
+const pad = {
+  addEventListener(type, fn) { listened[type] = fn; },
+  getBoundingClientRect() { return { left: 0, top: 0, width: 200, height: 100 }; }
+};
+const me = { _bound: [], pointerX: 0, pointerY: 0 };
+Idle.IdleFigure.prototype.trackPointer.call(me, pad);
+for (const t of ['pointermove', 'pointerleave', 'pointercancel']) {
+  if (!listened[t]) fail(`trackPointer hoert nicht auf ${t}`);
+  checks++;
+}
+if (listened.mousemove || listened.mouseleave) fail('trackPointer hoert noch auf Maus-Ereignisse');
+if (me._bound.length !== 3) fail(`destroy() kennt ${me._bound.length} statt 3 Zuhoerer`);
+listened.pointermove({ clientX: 150, clientY: 25 });
+if (me.pointerX !== 0.5 || me.pointerY !== -0.5) fail(`pointermove ergab ${me.pointerX}/${me.pointerY}`);
+listened.pointercancel();
+if (me.pointerX !== 0 || me.pointerY !== 0) fail('pointercancel stellt den Blick nicht zurueck');
+checks += 4;
 
 console.log(`${checks} Pruefungen, Seite und Bilderstreifen entscheiden identisch.`);
 console.log('EINIG');
