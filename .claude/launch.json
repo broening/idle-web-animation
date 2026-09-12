@@ -4,7 +4,10 @@
     {
       "name": "studio",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "5173"],
+      "runtimeArgs": [
+        "tools/serve.py",
+        "5173"
+      ],
       "port": 5173,
       "url": "http://localhost:5173"
     }

@@ -410,3 +410,64 @@ html, body {
 }
 
 .hint.tight { margin: 6px 0 0; }
+
+/* ------------------------------------------------------------------ *
+ * Layer list: a grip to drag by, an eye to switch off.
+ * ------------------------------------------------------------------ */
+
+.layers .grip {
+  color: var(--ink-2);
+  font-size: 11px;
+  letter-spacing: -2px;
+  cursor: grab;
+  opacity: 0.45;
+  flex: 0 0 auto;
+}
+.layers li:hover .grip { opacity: 1; }
+
+.layers .eye {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.layers .eye.off { color: var(--ink-2); opacity: 0.5; }
+.layers .eye:hover { background: var(--bg-2); }
+
+/* A hidden layer stays readable but says so. */
+.layers li.dim .nm { opacity: 0.45; text-decoration: line-through; }
+
+.layers li.dragging { opacity: 0.4; }
+
+/* The drop line sits on the edge being pointed at, so what you see is where
+ * it lands. A row that only highlighted itself was one place ambiguous. */
+.layers li.over-above { box-shadow: inset 0 2px 0 0 var(--accent); }
+.layers li.over-below { box-shadow: inset 0 -2px 0 0 var(--accent); }
+
+/* A name to create a figure under. */
+.txt {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+.txt:focus { outline: none; border-color: var(--accent); }
+
+/* Everything that writes goes flat and unclickable on the read-only server,
+ * rather than looking ready and failing on the click. */
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.file input:disabled { cursor: not-allowed; }
+
+.out { white-space: pre-wrap; }

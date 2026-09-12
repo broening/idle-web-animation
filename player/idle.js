@@ -256,6 +256,61 @@
       }
     },
 
+    /* Particles: a layer that rises once, fades, and comes back later.
+     *
+     * Every other block here oscillates around zero, which is right for a
+     * body and wrong for anything that leaves. drift carries a layer along a
+     * vector once per cycle and fades it at both ends. Between rises it is
+     * not drawn at all. One copy on its own reads as a sliding block, which
+     * is why this is meant to be used several times over: split the motes
+     * into groups, give each group its own `phase`, and they leave the hand a
+     * few at a time instead of all together.
+     *
+     * Same slot arithmetic as flipbook's burst mode, and for the same reason:
+     * a rise that outlives its own slot has to stay findable, or it is
+     * silently cut off at the slot boundary. */
+    drift: function (t, cfg, layer, env, out) {
+      var life = pos(cfg.life, 3.0);
+      /* A rise longer than the gap would overlap its own next copy, and one
+       * layer cannot be in two places. Widen the gap rather than pick. */
+      var every = Math.max(pos(cfg.every, 4.0), life);
+      /* Jitter may only spend the part of the slot the rise does not already
+       * use. Past that, a late rise still runs when the next one is due, the
+       * loop below has to choose one of them, and the layer jumps from the
+       * old opacity straight to the new one in a single frame. Measured on
+       * grim before this line: every 5.17, life 3.6, jitter 0.6 - the free
+       * share was 0.30, and the spray flickered. */
+      var jit = clamp(num(cfg.jitter, 0.5), 0, 1);
+      var free = 1 - life / every;
+      if (jit > free) jit = free;
+      var ph = num(cfg.phase, 0);
+      var tt = t - ph;
+      var i = Math.floor(tt / every);
+      var dt = -1;
+      for (var b = Math.ceil(life / every) + 1; b >= 0; b--) {
+        var slot = i - b;
+        var d = tt - (slot * every + hash01(slot + 31) * every * jit);
+        if (d >= 0 && d < life) { dt = d; break; }
+      }
+      if (dt < 0) { out.opacity = 0; return; }     /* between two rises */
+
+      var u = dt / life;
+      /* Eased out: a mote leaves fast and slows as it cools. Principle 6. */
+      var e = 1 - (1 - u) * (1 - u);
+      out.tx += e * num(cfg.dx, 0) + organic(t, 2.7, ph) * num(cfg.wander, 6);
+      out.ty += e * num(cfg.dy, -120);
+      /* In over the first eighth, out over the last half. Both ends matter: a
+       * mote that appears at full strength reads as a sprite being switched
+       * on, which is the thing this is trying not to look like.
+       *
+       * The two ends are deliberately lopsided. A group is drawn where it was
+       * painted, so while it is still fading in it is also still sitting on
+       * the source it came from - and a long fade-in leaves that source bare,
+       * because every group has already climbed away from it before any of
+       * them is visible. A fifth left a hole at the hand; an eighth does not. */
+      out.opacity *= clamp(Math.min(u / 0.125, (1 - u) / 0.5, 1), 0, 1);
+    },
+
     /* Light that lives: a lantern, a rune, an eye. Brightness and opacity
      * breathe on a period of their own, so it never locks to the chest. */
     glow: function (t, cfg, layer, env, out) {

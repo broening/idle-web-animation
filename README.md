@@ -30,7 +30,7 @@ page. Godot's web export is a WASM runtime measured in tens of megabytes for a
 loading screen that has to appear instantly. Spine additionally costs money,
 and the runtime licence is tied to owning the editor.
 
-The engine here is 502 non-blank lines.
+The engine here is 768 non-blank lines.
 
 ---
 
@@ -38,12 +38,16 @@ The engine here is 502 non-blank lines.
 
 ```
 player/
-  idle.js      the engine: 6 motion blocks, solve(), DOM and canvas renderers
+  idle.js      the engine: 8 motion blocks, solve(), DOM and canvas renderers
   idle.css     the layout contract - a figure is a stack of full-canvas images
 studio/
   index.html   authoring and checking surface
   studio.js    pivot dragging, sliders, contact sheet, events, export, IoU
 tools/
+  serve.py              the studio's dev server - reads like http.server, writes
+  import-layers.py      a folder of already-cut layers -> a rigged figure
+  split-particles.py    one layer of specks -> groups that can move apart
+  cut-glow.py           a lit part -> a screen-blend overlay that can pulse
   flatten.py            rigged figure -> the one flat PNG it came from
   test-determinism.mjs  proves solve() is a pure function of time
   test-agreement.mjs    proves the DOM and canvas renderers agree
@@ -58,11 +62,18 @@ docs/
 ## Run it
 
 ```bash
-python -m http.server 5173
+python tools/serve.py
 ```
 
 Then open <http://localhost:5173/studio/>. `.claude/launch.json` starts the
 same server from Claude Code.
+
+`python -m http.server 5173` still works and still serves everything, but it
+cannot write, so the studio switches creating, uploading and saving off and
+says why. `tools/serve.py` serves the same files and additionally answers
+`PUT` inside `figures/` and can run `import-layers.py` for you. Standard
+library only, and it binds to `127.0.0.1`: a server that writes to disk on
+request has no business being reachable from the network.
 
 ## Start a figure
 
@@ -72,11 +83,81 @@ single layer that breathes — enough to see it alive — and from there it gets
 split into parts by a layerize model (see `docs/models.md`) and each part gets
 its motion.
 
+Once a figure is loaded the layer list is a layer palette: drag a row by its
+grip to change draw order, and the dot beside it switches that layer off on
+the stage. The dot is a way of looking, not a property of the figure — the
+contact sheet ignores it, because the sheet's job is to show what ships.
+
+**Save** writes `figure.json` back where it came from. **Reset** throws away
+what you have changed and reloads that file. Both need `tools/serve.py`.
+
 The studio never shows the figure's own backdrop. When you are judging how
 something moves, a painted scene behind it is noise. Pick a stage colour
 instead, or leave it transparent and read the alpha edges against the
 checkerboard. The `background` field stays in `figure.json` for the target
 that wants it.
+
+### When the parts arrive already cut
+
+Sometimes the splitting has already happened — an artist exported one PNG per
+layer, every one the full canvas. Nothing then has to be guessed about *what*
+was cut, only about where each joint sits, and `docs/cutting.md` does not
+apply at all.
+
+In the studio: type a name, press **Create**, then **Upload parts…** and pick
+them all. The same thing from a shell, on a folder that is already there:
+
+```bash
+python tools/import-layers.py figures/grim grim
+```
+
+Files are read in sorted order, **front first**, the way a layer palette shows
+them; `figure.json` lists them the other way round and the tool reverses them.
+The part name comes from the file name — `1-Grim-Waffe.webp` becomes `waffe` —
+and that name picks the joint: a head turns about its neck, a cloak about its
+collar, a torso about its hips. German and English names both work.
+
+What comes out is a starting point, not an answer. It measures each part's
+alpha box honestly and guesses the rest, so the pivots want dragging in the
+studio and the parent chain wants reading. **The pose decides both**, and no
+file name knows the pose. On a figure aiming a rifle, for instance, the head
+and the weapon have to carry the same motion and sit at the same depth in the
+chain, or the mask leaves the sights — measured on `grim`, matching them holds
+the cheek weld to 0.49 px over the whole window.
+
+### After you repaint a layer
+
+`layers/` holds **copies**. Editing the source images changes nothing on its
+own — run the same command again:
+
+```bash
+python tools/import-layers.py figures/grim grim
+```
+
+The second run and every one after it **keeps the rig** and replaces only the
+pixels. Re-guessing pivots there would be the worst thing this tool could do:
+they are the part a person corrected by hand, and a redrawn sleeve looks
+exactly like the old one to a bounding box. `--rewrite-rig` forces a fresh
+guess and throws the corrections away.
+
+It then says what it could not do for you: layers that were *derived* from a
+source rather than copied from one (a glow overlay, a set of closed lids) are
+named, because only the tool that made them can remake them. So are source
+files with no layer in `figure.json`, layers whose file has gone missing, and
+files sitting in `layers/` that nothing points at.
+
+A part that is lit — a rune, a lantern, a pair of glowing lenses — does not
+need cutting out of the layer it is painted into:
+
+```bash
+python tools/cut-glow.py figures/grim/2-Grim-Kopf.webp \
+    figures/grim/layers/augen-glut.webp --hue green
+```
+
+That writes a *copy* of the lit pixels plus a blurred halo. Mount it over the
+original with `"blend": "screen"` and a `glow` motion: screen adds, so at rest
+the two together look like the drawing and at the top of the pulse the light
+gets brighter. Nothing is inpainted, so nothing can tear.
 
 ## Ship a figure
 

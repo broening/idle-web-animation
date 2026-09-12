@@ -58,6 +58,9 @@
     state.figure = fig;
     state.base = base;
     state.selected = null;
+    /* A new figure starts with every layer on. Carrying the eye state across
+     * would hide a layer of the new figure that happens to share an id. */
+    state.hidden = {};
     state.window = (fig.motion && fig.motion.windowSeconds) || 8;
     $('scrub').max = String(state.window);
     $('scrub').value = '0';
@@ -78,6 +81,10 @@
     $('sheet').width = 0;
     $('eventsOut').textContent = '';
     $('iouTable').innerHTML = '';
+
+    /* Whatever was just mounted is, by definition, what is on disk. Every
+     * later edit is measured against this string. */
+    markClean();
 
     state.images = null;
     return Idle.loadImages(fig, base).then(function (imgs) { state.images = imgs; });
@@ -147,8 +154,267 @@
   }
 
   /* ================================================================== *
+   * Creating, uploading, saving, resetting
+   *
+   * `python -m http.server` cannot write, which is why the only ways out of
+   * this studio used to be a zip or a block of JSON to paste somewhere by
+   * hand. `tools/serve.py` serves the same files and additionally answers PUT
+   * inside figures/ and can run the importer. Everything here switches itself
+   * off, with the reason on screen, when the read-only server is the one
+   * answering - guessing and failing later would be worse.
+   * ================================================================== */
+
+  state.canWrite = false;
+  state.saved = '';                     /* the figure exactly as it is on disk */
+
+  var NAME_OK = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+  function say(msg) { $('figureOut').textContent = msg || ''; }
+
+  function figureJson() { return JSON.stringify(state.figure, null, 2) + '\n'; }
+
+  /* Comparing the serialised figure is exact and costs nothing worth saving.
+   * Tracking a dirty flag through every slider, pivot drag and reorder is the
+   * version that quietly goes wrong. */
+  function isDirty() { return !!state.figure && figureJson() !== state.saved; }
+
+  function markClean() {
+    state.saved = state.figure ? figureJson() : '';
+    refreshSaveState();
+  }
+
+  function onDisk() { return state.name && state.name !== UNSAVED; }
+
+  function refreshSaveState() {
+    $('saveBtn').disabled = !state.canWrite || !onDisk();
+    $('resetBtn').disabled = !onDisk();
+    $('newFigureBtn').disabled = !state.canWrite;
+    $('partsInput').disabled = !state.canWrite;
+    var s = $('serverState');
+    if (!state.canWrite) {
+      s.textContent = 'Read-only server. Run  python tools/serve.py  to create, '
+                    + 'upload and save.';
+      return;
+    }
+    if (!onDisk()) { s.textContent = 'This figure is not on disk yet.'; return; }
+    s.textContent = isDirty() ? 'Unsaved changes.' : 'Saved.';
+  }
+
+  function probeServer() {
+    /* A route that only tools/serve.py has. Guessing from a failed PUT is
+     * worse: http.server answers 501 for a method it does not know, and
+     * anything in between could answer something else again. */
+    return fetch('/_studio')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (j) {
+        state.canWrite = !!(j && j.write);
+        refreshSaveState();
+      });
+  }
+
+  function putFile(path, body, type) {
+    return fetch(path, { method: 'PUT', headers: { 'Content-Type': type }, body: body })
+      .then(function (r) {
+        return r.text().then(function (txt) {
+          var j = {};
+          try { j = JSON.parse(txt); } catch (e) { j = {}; }
+          if (!r.ok) throw new Error(j.error || (path + ' -> ' + r.status));
+          return j;
+        });
+      });
+  }
+
+  function saveFigure() {
+    if (!state.canWrite || !onDisk()) return Promise.resolve();
+    return putFile(FIGURES_ROOT + state.name + '/figure.json', figureJson(),
+                   'application/json')
+      .then(function () {
+        markClean();
+        say('Saved figures/' + state.name + '/figure.json');
+      });
+  }
+
+  function resetFigure() {
+    if (!onDisk()) return;
+    if (isDirty() && !window.confirm(
+        'Throw the unsaved changes away and reload figures/' + state.name +
+        '/figure.json from disk?')) return;
+    loadFigure(state.name)
+      .then(function () { say('Reloaded from disk.'); })
+      .catch(showError);
+  }
+
+  function registerFigure(name) {
+    return fetch(FIGURES_ROOT + 'index.json')
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .catch(function () { return []; })
+      .then(function (names) {
+        if (!names || names.indexOf(name) >= 0) return null;
+        names.push(name);
+        return putFile(FIGURES_ROOT + 'index.json',
+                       JSON.stringify(names) + '\n', 'application/json');
+      });
+  }
+
+  function createFigure() {
+    var name = ($('newName').value || '').trim().toLowerCase();
+    if (!NAME_OK.test(name)) {
+      say('A name may hold a-z, 0-9, dot, dash and underscore, and has to '
+        + 'start with a letter or a digit.');
+      return;
+    }
+    /* No layers on purpose. The importer treats an empty list as "no rig to
+     * keep" and builds one from the parts, which is exactly what should
+     * happen the first time they are uploaded. */
+    var fig = {
+      name: name,
+      note: 'Created in the studio. No parts yet.',
+      size: { width: 1000, height: 1000 },
+      motion: { windowSeconds: 8, followSeconds: 0.085, parallax: 0.25 },
+      layers: []
+    };
+    say('creating figures/' + name + ' ...');
+    putFile(FIGURES_ROOT + name + '/figure.json',
+            JSON.stringify(fig, null, 2) + '\n', 'application/json')
+      .then(function () { return registerFigure(name); })
+      .then(function () { return refreshFigureList(name); })
+      .then(function () {
+        $('newName').value = '';
+        say('figures/' + name + ' created. Upload its parts next.');
+      })
+      .catch(function (e) { say(String((e && e.message) || e)); });
+  }
+
+  /* The server refuses anything outside a small character set, so fix the
+   * name here rather than letting the upload fail halfway through a batch. */
+  function cleanName(n) {
+    var s = String(n).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.\-_]+/, '');
+    return s || 'part.png';
+  }
+
+  function uploadParts(fileList) {
+    if (!state.canWrite) return;
+    if (!onDisk()) { say('Create a figure first, or pick one from the list.'); return; }
+    var name = state.name;
+
+    var files = [];
+    for (var i = 0; i < fileList.length; i++) files.push(fileList[i]);
+    /* Name order, front first - the same rule import-layers.py uses, applied
+     * here too so what the studio shows and what the tool does cannot drift. */
+    files.sort(function (a, b) {
+      return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+    });
+
+    /* The importer reads figure.json off the disk. Uploading on top of
+     * unsaved edits would quietly import the older rig and throw the edits
+     * away, so they go first. */
+    var start = isDirty() ? saveFigure() : Promise.resolve();
+
+    return start.then(function () {
+      var chain = Promise.resolve();
+      files.forEach(function (f, k) {
+        chain = chain.then(function () {
+          say('uploading ' + (k + 1) + ' of ' + files.length + ': ' + f.name);
+          return putFile(FIGURES_ROOT + name + '/' + cleanName(f.name), f,
+                         f.type || 'application/octet-stream');
+        });
+      });
+      return chain;
+    }).then(function () {
+      say('running tools/import-layers.py ...');
+      return fetch('/_import?name=' + encodeURIComponent(name), { method: 'POST' })
+        .then(function (r) { return r.json(); });
+    }).then(function (res) {
+      if (!res.ok) throw new Error(res.err || res.error || 'import failed');
+      return loadFigure(name).then(function () {
+        say(files.length + ' part(s) in.\n' + (res.out || ''));
+      });
+    }).catch(function (e) { say(String((e && e.message) || e)); });
+  }
+
+  function refreshFigureList(pick) {
+    return listFigures().then(function (names) {
+      var sel = $('figureSel');
+      sel.innerHTML = '';
+      for (var i = 0; i < names.length; i++) {
+        var o = document.createElement('option');
+        o.value = names[i];
+        o.textContent = names[i];
+        sel.appendChild(o);
+      }
+      var want = (pick && names.indexOf(pick) >= 0) ? pick : names[0];
+      if (!want) {
+        say('No figures found under ' + FIGURES_ROOT);
+        return null;
+      }
+      sel.value = want;
+      return loadFigure(want);
+    });
+  }
+
+  /* ================================================================== *
    * Layer list and selection
    * ================================================================== */
+
+  /* Which layers the eye is switched off for. Keyed by id, and deliberately
+   * NOT part of the figure: this is a way of looking at the stage, not a
+   * property of the character. The contact sheet ignores it, because the
+   * sheet's whole job is to show what ships. */
+  state.hidden = {};
+
+  /* The stage is built once, in draw order, and the player only ever writes
+   * transform, opacity and filter. So display and classList are free for the
+   * studio to use, and a re-stack is just moving existing nodes. */
+  function boxOf(id) {
+    var stage = state.fig && state.fig.stage;
+    if (!stage) return null;
+    for (var i = 0; i < stage.children.length; i++) {
+      if (stage.children[i].getAttribute('data-id') === id) return stage.children[i];
+    }
+    return null;
+  }
+
+  function applyHidden() {
+    var layers = (state.figure && state.figure.layers) || [];
+    for (var i = 0; i < layers.length; i++) {
+      var box = boxOf(layers[i].id);
+      if (box) box.style.display = state.hidden[layers[i].id] ? 'none' : '';
+    }
+  }
+
+  /* Draw order changed, so the DOM has to say so. appendChild moves a node
+   * that is already there, which is why this needs no remount and loses no
+   * loaded image. */
+  function restack() {
+    var stage = state.fig && state.fig.stage;
+    if (!stage) return;
+    var layers = state.figure.layers || [];
+    for (var i = 0; i < layers.length; i++) {
+      var box = boxOf(layers[i].id);
+      if (box) stage.appendChild(box);
+    }
+  }
+
+  /* List position to array index. The list runs front to back and the array
+   * runs back to front, so every drop has to be turned around. Getting this
+   * backwards puts the cloak in front of the face and looks like a bug in the
+   * renderer rather than in the arithmetic. */
+  function listToArray(li, len) { return len - 1 - li; }
+
+  function moveLayer(fromList, toList) {
+    var layers = state.figure.layers || [];
+    var n = layers.length;
+    var from = listToArray(fromList, n);
+    var to = listToArray(toList, n);
+    if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+    var moved = layers.splice(from, 1)[0];
+    layers.splice(to, 0, moved);
+    restack();
+    buildLayerList();
+  }
+
+  var dragFrom = -1;
 
   function buildLayerList() {
     var ul = $('layerList');
@@ -157,9 +423,31 @@
     /* Draw order is back to front. Read it top to bottom as front to back,
      * the way a layer palette does. */
     for (var i = layers.length - 1; i >= 0; i--) {
-      (function (L) {
+      (function (L, listIndex) {
         var li = document.createElement('li');
-        if (L.id === state.selected) li.className = 'on';
+        li.className = (L.id === state.selected ? 'on' : '') +
+                       (state.hidden[L.id] ? ' dim' : '');
+        li.draggable = true;
+        li.setAttribute('data-li', String(listIndex));
+
+        var grip = document.createElement('span');
+        grip.className = 'grip';
+        grip.textContent = '⋮⋮';
+        grip.title = 'drag to change draw order';
+
+        var eye = document.createElement('button');
+        eye.type = 'button';
+        eye.className = 'eye' + (state.hidden[L.id] ? ' off' : '');
+        eye.textContent = state.hidden[L.id] ? '○' : '●';
+        eye.title = 'show or hide on the stage - the contact sheet ignores this';
+        eye.addEventListener('click', function (e) {
+          /* Without this the row underneath also fires and the layer gets
+           * selected every time the eye is clicked. */
+          e.stopPropagation();
+          state.hidden[L.id] = !state.hidden[L.id];
+          applyHidden();
+          buildLayerList();
+        });
 
         var nm = document.createElement('span');
         nm.className = 'nm';
@@ -174,16 +462,59 @@
         var p = L.pivot || [0.5, 0.5];
         pv.textContent = p[0].toFixed(2) + ' / ' + p[1].toFixed(2);
 
+        li.appendChild(grip);
+        li.appendChild(eye);
         li.appendChild(nm);
         li.appendChild(tags);
         li.appendChild(pv);
+
         li.addEventListener('click', function () {
           state.selected = L.id;
           buildLayerList();
           buildMotionControls();
         });
+
+        li.addEventListener('dragstart', function (e) {
+          dragFrom = listIndex;
+          li.className += ' dragging';
+          /* Firefox refuses to start a drag without data on the transfer. */
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(listIndex));
+          }
+        });
+        li.addEventListener('dragend', function () {
+          dragFrom = -1;
+          buildLayerList();
+        });
+        li.addEventListener('dragover', function (e) {
+          if (dragFrom < 0 || dragFrom === listIndex) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          /* Mark the half being pointed at, so the drop lands where the line
+           * is drawn rather than one row off. */
+          var r = li.getBoundingClientRect();
+          var after = (e.clientY - r.top) > r.height / 2;
+          li.className = li.className.replace(/ over-\w+/g, '') +
+            (after ? ' over-below' : ' over-above');
+        });
+        li.addEventListener('dragleave', function () {
+          li.className = li.className.replace(/ over-\w+/g, '');
+        });
+        li.addEventListener('drop', function (e) {
+          e.preventDefault();
+          var r = li.getBoundingClientRect();
+          var after = (e.clientY - r.top) > r.height / 2;
+          var target = listIndex + (after ? 1 : 0);
+          /* Removing the dragged row first shifts everything below it up by
+           * one, so a drop below the source has to come back down by one. */
+          if (dragFrom < target) target -= 1;
+          moveLayer(dragFrom, target);
+          dragFrom = -1;
+        });
+
         ul.appendChild(li);
-      })(layers[i]);
+      })(layers[i], layers.length - 1 - i);
     }
   }
 
@@ -272,7 +603,9 @@
     flipbook: { fps: 12, every: 6.5, jitter: 0.45 },
     glow:     { strength: 1, period: 5.3, min: 0.55, brightness: 0.22, phase: 0 },
     charge:   { stages: 3, cycle: 24, hold: 1.0, ramp: 0.35, showFrom: 1,
-                brightness: 0.6, grow: 0.02 }
+                brightness: 0.6, grow: 0.02 },
+    drift:    { dx: 0, dy: -120, life: 3.0, every: 4.0, jitter: 0.5,
+                phase: 0, wander: 6 }
   };
 
   function buildMotionControls() {
@@ -1344,20 +1677,27 @@
       drawOverlay();
     });
 
-    listFigures().then(function (names) {
-      var sel = $('figureSel');
-      sel.innerHTML = '';
-      for (var i = 0; i < names.length; i++) {
-        var o = document.createElement('option');
-        o.value = names[i];
-        o.textContent = names[i];
-        sel.appendChild(o);
-      }
-      if (names.length) return loadFigure(names[0]);
-      document.body.insertAdjacentHTML('afterbegin',
-        '<p style="padding:16px;color:#e06c75">No figures found under ' +
-        FIGURES_ROOT + '</p>');
-    }).catch(function (e) {
+    $('newFigureBtn').addEventListener('click', createFigure);
+    $('newName').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') createFigure();
+    });
+    $('saveBtn').addEventListener('click', function () {
+      saveFigure().catch(function (e) { say(String((e && e.message) || e)); });
+    });
+    $('resetBtn').addEventListener('click', resetFigure);
+    $('partsInput').addEventListener('change', function () {
+      if (this.files && this.files.length) uploadParts(this.files);
+      this.value = '';
+    });
+
+    /* Dirtiness is worked out by serialising the figure, which is cheap but
+     * not free. Twice a second is well under what anyone notices and does not
+     * put a JSON.stringify inside the animation loop. */
+    window.setInterval(refreshSaveState, 500);
+
+    probeServer();
+
+    refreshFigureList().catch(function (e) {
       document.body.insertAdjacentHTML('afterbegin',
         '<p style="padding:16px;color:#e06c75">' + e.message + '</p>');
     });

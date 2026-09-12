@@ -62,7 +62,7 @@ them; the studio takes a figure's name from its folder.
 Layers are listed **back to front**. The studio shows them the other way
 round, the way a layer palette does.
 
-## The six motions
+## The eight motions
 
 ```json
 { "type": "breathe",  "strength": 1.0, "period": 4.0, "phase": 0 }
@@ -72,6 +72,7 @@ round, the way a layer palette does.
 { "type": "flipbook", "mode": "burst", "fps": 12, "every": 6.5, "jitter": 0.45 }
 { "type": "glow",     "strength": 1.0, "period": 5.3, "min": 0.55, "brightness": 0.22 }
 { "type": "charge",   "stages": 3, "cycle": 24, "hold": 1.0, "ramp": 0.35, "showFrom": 1 }
+{ "type": "drift",    "dx": 0, "dy": -120, "life": 3.0, "every": 4.0, "jitter": 0.5, "phase": 0, "wander": 6 }
 ```
 
 - **breathe** — scales up and narrows at once, and lifts slightly.
@@ -85,7 +86,6 @@ round, the way a layer palette does.
   the frames once every `every` seconds, with `jitter` spreading the start so
   two effects never fire in lockstep. Between bursts the layer is hidden.
 - **glow** — pulses opacity down to `min` and brightness up by `brightness`.
-
 - **charge** — a slow build-up that fires in stages, each stronger than the
   last. One `cycle` is split into `stages` equal slots; in slot *n* the layer
   ramps up over `ramp`, holds for `hold`, ramps down again, and reaches *n /
@@ -93,8 +93,53 @@ round, the way a layer palette does.
   bolt images with `showFrom` 1, 2 and 3 become three visible steps of one
   discharge rather than a single flash. Between flashes the layer is hidden.
 
+- **drift** — the only block that goes somewhere and stays. The layer travels
+  `dx, dy` pixels over `life` seconds on an ease-out, fades in over the first
+  eighth and out over the last half, and is not drawn at all between rises.
+  `every` is the gap between rises, `jitter` spreads their start, `wander`
+  is a slow sideways waver, and `phase` shifts the whole schedule.
+
 Several motions can sit on one layer; they add up. A hand can `sway` and
 `glow` at the same time.
+
+## Particles
+
+There is no particle system, and `drift` is not one. It moves whole layers,
+like everything else here, so one `drift` on one layer of specks slides all of
+them together — confetti on a string.
+
+What makes it read as a stream is using it **several times over**. Split the
+specks into groups, one layer each, and give every group its own `phase`,
+`every`, `life` and distance. `tools/split-particles.py` does the splitting,
+filling the groups round robin so each one is scattered across the whole spray
+rather than owning a corner of it — a group that is one solid clump is the
+confetti problem again at one tenth the size.
+
+Two numbers decide whether it works, and both were found the hard way on
+`grim`, which has 154 specks in ten groups:
+
+1. **Keep the climb short.** The specks are painted where the stream already
+   is, so the drawing does most of the work and the motion only has to make it
+   live. 100 px of climb pulled the whole spray off the hand it came from and
+   left a hole there; 50 to 86 px does not.
+2. **Give every group a different `every`.** Ten groups on one period beat
+   together into a single pulse — the confetti again, in time. Measured over
+   300 s with the periods spread from 4.4 to 7.19 s, the strongest repeat in
+   the whole spray is 0.35 of a perfect one, and between 2 and 10 groups are
+   on screen at any moment.
+
+   Spread them by more than it takes to look tidy. `jitter` cannot help here:
+   the engine clamps it to the share of the slot the rise leaves free, or two
+   rises of one layer overlap and the layer jumps between them — which is
+   flicker, and is what `tools/test-agreement.mjs` now refuses.
+
+And one thing to know before reporting a bug against it: **turn the studio's
+window loop off to watch particles.** `windowSeconds` is a review window, not
+a loop period, so restarting it at 0 cuts every motion mid-stride. Breathing
+and sway survive that because they are near where they started; a spray does
+not. On `grim` the seam is a 0.91 opacity step, and no window length fixes it
+— 8, 16, 24, 32 and 40 s were all measured, and the shortest seam of those is
+still 0.91, because the group periods do not divide any of them.
 
 ## Blinking properly
 
@@ -110,6 +155,30 @@ hole where an eye should be. Give the figure both roles:
 
 The head carries the head's own motion; the eyes ride it through `parent` and
 must not have a `gaze` of their own, or they drift off the face.
+
+### A face with no eyelids
+
+A mask, a helmet, a skull. The two roles still work — what changes is what
+they hold. `grim` is a plague doctor whose lenses are lit, so the blink is the
+light going out:
+
+| Layer | role | what it is |
+|---|---|---|
+| head | – | the mask, lit lenses painted in |
+| lenses lit | `eyesOpen` | a `screen` copy of the lit pixels, with `glow`. Hidden while the eyes are out. |
+| lenses unlit | `eyesClosed` | dark glass, drawn **over** the head. Shown only while the eyes are out. |
+
+The unlit copy has to genuinely cover the lit pixels underneath, or the light
+shows through its own blink. Measure it rather than trusting the drawing:
+on `grim`, 99.0 % of the head's lit pixels sit under full alpha and the
+thinnest spot is 167 of 255.
+
+Put the `blink` on **both eye layers**, not on the head. It may legally sit on
+any ancestor, but `blink` adds a touch of widening as anticipation, and on a
+head that lifts the whole hat — measured at 2.7 px on `grim`, which is five
+times the drift the rest of that rig was built to hold. On the eye layers
+themselves the same term is worth 0.3 px. Two siblings under one parent read
+time at the same depth, so one schedule written twice fires as one event.
 
 ## Blend modes, and why effects are cheap
 

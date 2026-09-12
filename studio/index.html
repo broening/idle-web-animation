@@ -49,9 +49,40 @@
     </header>
 
     <section class="card">
+      <h2>Figure</h2>
+      <p id="serverState" class="hint">checking the server&hellip;</p>
+
+      <div class="row">
+        <input id="newName" class="txt" type="text" spellcheck="false"
+               placeholder="new figure name" autocomplete="off">
+        <button id="newFigureBtn" class="btn" type="button">Create</button>
+      </div>
+
+      <div class="row">
+        <label class="btn ghost file" id="partsBtn">
+          Upload parts&hellip;
+          <input id="partsInput" type="file" accept="image/*" multiple hidden>
+        </label>
+        <button id="saveBtn" class="btn primary" type="button">Save</button>
+        <button id="resetBtn" class="btn ghost" type="button">Reset</button>
+      </div>
+
+      <p class="hint">Parts are read in <b>name order, front first</b> &mdash;
+      name them <code>1-head</code>, <code>2-arm</code> and so on. Order is not
+      final: drag the rows below and save. Uploading runs
+      <code>tools/import-layers.py</code>, which keeps a rig you have already
+      corrected and only replaces the pixels.</p>
+
+      <p id="figureOut" class="out"></p>
+    </section>
+
+    <section class="card">
       <h2>Layers</h2>
       <p class="hint">Pick a layer, then drag its dot on the stage to move the
       pivot. The number lands straight in figure.json.</p>
+      <p class="hint">Drag a row by its grip to change draw order &mdash; the
+      list runs front to back. The dot switches a layer off on the stage only;
+      the contact sheet still shows what ships.</p>
       <ul id="layerList" class="layers"></ul>
     </section>
 

@@ -119,7 +119,7 @@ const motionsBlock = engine.slice(engine.indexOf('var MOTIONS = {'), engine.inde
 const paramsBlock = studio.slice(studio.indexOf('var MOTION_PARAMS = {'),
                                  studio.indexOf('function buildMotionControls'));
 
-for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow', 'charge']) {
+for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow', 'charge', 'drift']) {
   const i = motionsBlock.indexOf(name + ': function');
   if (i < 0) fail(`Baustein ${name} fehlt im Motor`);
   const body = motionsBlock.slice(i, motionsBlock.indexOf('},', i));
@@ -208,6 +208,40 @@ let closed = 0;
 for (let i = 0; i < 6000; i++) if (Idle.solve(inherited, i / 100, {})[1].hidden) closed++;
 if (closed === 0) fail('role eyesOpen erbt das Blinzeln nicht vom Elternteil');
 checks += 6000;
+
+/* drift must not jump between two frames.
+ *
+ * It did. Jitter was allowed to push a rise so late that it was still running
+ * when the next one came due; the solver then had to pick one of the two, and
+ * the layer cut from the old opacity straight to the new one in a single
+ * frame. On grim that was a 0.62 step, and it read as the whole spray
+ * flickering. The engine now spends only the part of the slot the rise leaves
+ * free, so the steepest change possible is the fade ramp itself.
+ *
+ * The parameters below are the ones that used to break it: a rise filling
+ * most of its slot, with the jitter turned up past what is left. */
+const rampe = (life) => (1 / 60) / (life * 0.125);   /* fade-in per 60 fps frame */
+for (const [life, every, jitter] of [[3.6, 5.17, 0.9], [3.0, 3.0, 1.0],
+                                     [2.0, 9.0, 0.95], [4.0, 4.2, 0.6]]) {
+  const dr = F([{ id: 'p', src: 'x', pivot: [0.5, 0.5],
+    motions: [{ type: 'drift', dx: 20, dy: -80, life, every, jitter }] }]);
+  let vor = Idle.solve(dr, 0, {})[0].opacity, groesster = 0, wann = 0;
+  for (let i = 1; i < 60 * 400; i++) {
+    const o = Idle.solve(dr, i / 60, {})[0].opacity;
+    const d = Math.abs(o - vor);
+    if (d > groesster) { groesster = d; wann = i / 60; }
+    vor = o;
+  }
+  /* A little headroom: the ease-out means the last frame of a rise is not
+   * exactly on the ramp. */
+  const grenze = rampe(life) * 1.5;
+  if (groesster > grenze) {
+    fail(`drift life=${life} every=${every} jitter=${jitter}: Deckkraft springt `
+       + `${groesster.toFixed(3)} in einem Bild bei t=${wann.toFixed(2)}, `
+       + `erlaubt sind ${grenze.toFixed(3)} - das flimmert`);
+  }
+  checks += 60 * 400;
+}
 
 console.log(`${checks} Pruefungen, Seite und Bilderstreifen entscheiden identisch.`);
 console.log('EINIG');
