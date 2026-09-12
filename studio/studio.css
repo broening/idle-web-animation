@@ -349,3 +349,64 @@ html, body {
   max-height: 220px;
   overflow: auto;
 }
+
+/* ---------------- stage background ---------------- */
+
+/* The studio never shows the figure's own backdrop. When you are judging how
+ * something moves, a painted scene behind it is noise. Pick a flat colour, or
+ * leave it transparent and read the alpha edges against the checkerboard. */
+.stage-col.solid {
+  background-image: none;
+}
+
+.swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sw {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.sw:hover { border-color: var(--accent); }
+
+.sw.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(110, 168, 254, 0.28);
+}
+
+.sw-alpha {
+  background-image:
+    linear-gradient(45deg, #7d8590 25%, transparent 25%),
+    linear-gradient(-45deg, #7d8590 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #7d8590 75%),
+    linear-gradient(-45deg, transparent 75%, #7d8590 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+  background-color: #d5d9de;
+}
+
+.sw.pick {
+  width: 26px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sw.pick::-webkit-color-swatch-wrapper { padding: 2px; }
+.sw.pick::-webkit-color-swatch { border: 0; border-radius: 3px; }
+
+.btn.wide {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.hint.tight { margin: 6px 0 0; }

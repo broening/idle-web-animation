@@ -52,6 +52,20 @@ python -m http.server 5173
 Then open <http://localhost:5173/studio/>. `.claude/launch.json` starts the
 same server from Claude Code.
 
+## Start a figure
+
+A figure begins as one flat image, straight out of the drawing. Press
+**Start from a flat image** in the studio and drop the PNG in. It mounts as a
+single layer that breathes — enough to see it alive — and from there it gets
+split into parts by a layerize model (see `docs/models.md`) and each part gets
+its motion.
+
+The studio never shows the figure's own backdrop. When you are judging how
+something moves, a painted scene behind it is noise. Pick a stage colour
+instead, or leave it transparent and read the alpha edges against the
+checkerboard. The `background` field stays in `figure.json` for the target
+that wants it.
+
 ## Ship a figure
 
 Export a zip from the studio at whatever size the target wants, drop the

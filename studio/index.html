@@ -23,7 +23,14 @@
       <output id="timeOut" class="time">0.00 s</output>
       <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
       <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
-      <label class="chk"><input id="showBg" type="checkbox" checked> backdrop</label>
+
+      <span class="swatches" role="group" aria-label="stage background">
+        <button class="sw sw-alpha on" type="button" data-bg="" title="transparent"></button>
+        <button class="sw" type="button" data-bg="#000000" style="background:#000" title="black"></button>
+        <button class="sw" type="button" data-bg="#7d8590" style="background:#7d8590" title="mid grey"></button>
+        <button class="sw" type="button" data-bg="#ffffff" style="background:#fff" title="white"></button>
+        <input id="bgPick" class="sw pick" type="color" value="#1b6ac9" title="pick a colour">
+      </span>
     </div>
   </main>
 
@@ -32,6 +39,12 @@
     <header class="panel-head">
       <h1>Idle Studio</h1>
       <select id="figureSel" class="sel"></select>
+      <label class="btn ghost wide file" id="newFromImageBtn">
+        Start from a flat image&hellip;
+        <input id="newImage" type="file" accept="image/*" hidden>
+      </label>
+      <p class="hint tight">One PNG in, one layer out. Split it into parts with
+      a layerize model, then give each part its motion.</p>
     </header>
 
     <section class="card">

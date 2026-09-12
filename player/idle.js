@@ -283,9 +283,14 @@
    * Mount: build the DOM once, then push solved state into it.
    * ------------------------------------------------------------------ */
 
-  function IdleFigure(host, figure, baseUrl) {
+  /* opts.background: false leaves the backdrop out. The studio uses this -
+   * when you are judging how a figure moves, a painted graveyard behind it is
+   * noise. The field stays in figure.json for the target that wants it. */
+  function IdleFigure(host, figure, baseUrl, opts) {
+    opts = opts || {};
     this.host = host;
     this.figure = figure;
+    this.showBackground = opts.background !== false;
     this.base = baseUrl ? baseUrl.replace(/\/+$/, '') + '/' : '';
     this.pointerX = 0;
     this.pointerY = 0;
@@ -312,7 +317,7 @@
      * never the same shape as the character canvas - the priest's is
      * 2752x1536 behind a 1000x1000 figure - and on a loading screen it has to
      * cover the whole screen while the figure stands in front of it. */
-    if (f.background) {
+    if (f.background && this.showBackground) {
       var bg = document.createElement('img');
       bg.className = 'idle-bg';
       bg.src = this.base + f.background;
