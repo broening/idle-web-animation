@@ -335,6 +335,157 @@ if (existsSync(figPath('pedro'))) {
 }
 console.log('Perioden: gleich und doppelt werden gemeldet, 4.0 gegen 7.5 nicht.');
 
+/* --- 6f. export pixel scaling --------------------------------------------
+ *
+ * offset, gaze `pixels` and drift `dx`/`dy`/`wander` are canvas pixels in the
+ * player (idle.js), not fractions of the canvas the way pivots and depths
+ * are. A sized export shrinks f.size and the layer images but used to leave
+ * these untouched, so a figure exported smaller than its master carried a
+ * standing offset, a gaze reach and a drift rise all sized for the master
+ * canvas - visibly too large once the canvas itself had shrunk. */
+
+const scaleSrc = studio.slice(studio.indexOf('function scaleExportPixels'),
+                              studio.indexOf('/* end of export pixel scaling */'));
+if (!scaleSrc || scaleSrc.indexOf('function scaleExportPixels') !== 0) {
+  fail('scaleExportPixels nicht zwischen seinen Markern gefunden');
+}
+const { scaleExportPixels } = new Function(scaleSrc + '\nreturn { scaleExportPixels };')();
+
+/* offset moves per axis: x with sx, y with sy, rounded to one decimal like
+ * nudgeLayer already rounds a hand-dragged offset. */
+{
+  const fig = { layers: [{ id: 'a', src: 'a', offset: [-15.9, -0.7] }] };
+  scaleExportPixels(fig, 0.558, 0.558);
+  const got = fig.layers[0].offset;
+  if (Math.abs(got[0] - -8.9) > 0.05 || Math.abs(got[1] - -0.4) > 0.05) {
+    fail(`scaleExportPixels: offset [-15.9,-0.7] * 0.558 ergab ${JSON.stringify(got)}, erwartet ~[-8.9,-0.4]`);
+  }
+  checks += 2;
+}
+
+/* gaze pixels drives both axes at once (idle.js's gaze block) and has no x/y
+ * split of its own, so it takes sx. */
+{
+  const fig = { layers: [{ id: 'a', src: 'a', motions: [{ type: 'gaze', pixels: 9 }] }] };
+  scaleExportPixels(fig, 0.5, 0.7);
+  const got = fig.layers[0].motions[0].pixels;
+  if (Math.abs(got - 4.5) > 0.05) fail(`scaleExportPixels: gaze pixels 9 * 0.5 ergab ${got}, erwartet 4.5`);
+  checks++;
+}
+
+/* drift: dx and wander move along x (sx), dy along y (sy) - they do not
+ * share one factor. */
+{
+  const fig = { layers: [{ id: 'a', src: 'a',
+    motions: [{ type: 'drift', dx: 20, dy: -120, wander: 6 }] }] };
+  scaleExportPixels(fig, 0.5, 0.6);
+  const m = fig.layers[0].motions[0];
+  if (Math.abs(m.dx - 10) > 0.05) fail(`scaleExportPixels: drift dx 20 * 0.5 ergab ${m.dx}, erwartet 10`);
+  if (Math.abs(m.dy - -72) > 0.05) fail(`scaleExportPixels: drift dy -120 * 0.6 ergab ${m.dy}, erwartet -72`);
+  if (Math.abs(m.wander - 3) > 0.05) fail(`scaleExportPixels: drift wander 6 * 0.5 ergab ${m.wander}, erwartet 3`);
+  checks += 3;
+}
+
+/* Untouched keys stay untouched: sway's degrees is an angle, not a pixel
+ * count, and must survive scaling unchanged. */
+{
+  const fig = { layers: [{ id: 'a', src: 'a', motions: [{ type: 'sway', degrees: 2.2 }] }] };
+  scaleExportPixels(fig, 0.5, 0.5);
+  if (fig.layers[0].motions[0].degrees !== 2.2) {
+    fail('scaleExportPixels: sway.degrees wurde skaliert, es ist ein Winkel, kein Pixelwert');
+  }
+  checks++;
+}
+
+/* A master export (sx = sy = 1) must be a no-op. */
+{
+  const fig = { layers: [{ id: 'a', src: 'a', offset: [3.4, -1.2],
+    motions: [{ type: 'drift', dx: 20, dy: -120, wander: 6 }] }] };
+  const before = JSON.stringify(fig);
+  scaleExportPixels(fig, 1, 1);
+  if (JSON.stringify(fig) !== before) fail('scaleExportPixels: sx=sy=1 haette nichts aendern duerfen');
+  checks++;
+}
+
+/* A layer with neither offset nor motions must not crash. */
+scaleExportPixels({ layers: [{ id: 'a', src: 'a' }] }, 0.5, 0.5);
+checks++;
+console.log('Export-Skalierung: offset, gaze pixels und drift dx/dy/wander folgen dem Massstab, degrees nicht.');
+
+/* --- 6g. events scan: eyesClosed reports the blink, not the gap ----------
+ *
+ * scanEvents() used to read `on = !!s.hidden` for every blink. That is right
+ * for eyesOpen - idle.js hides it while the lid is down - and backwards for
+ * eyesClosed, which idle.js hides while the eye is OPEN (state[i].hidden at
+ * the end of solve() in player/idle.js). On a figure whose only blink sits
+ * on an eyesClosed layer, like pedro's augen-zu, the scan reported the long
+ * stretches between blinks as if they were the blink itself. */
+
+const eventsSrc = studio.slice(studio.indexOf('function scanEvents'),
+                               studio.indexOf('function renderEvents'));
+if (!eventsSrc || eventsSrc.indexOf('function scanEvents') !== 0) {
+  fail('scanEvents nicht gefunden');
+}
+/* scanEvents reads the studio's own `state.figure` and the page-global
+ * `Idle` - both come in as parameters to the wrapper so the lifted function
+ * closes over the ones this test controls, exactly like the guard functions
+ * above. */
+const scanWrap = new Function('state', 'Idle', eventsSrc + '\nreturn scanEvents;');
+const scan = (fig) => scanWrap({ figure: fig }, Idle)(30, 60);
+
+const G = (id, role) => ({
+  size: { width: 100, height: 100 }, motion: {},
+  layers: [{ id: id, src: 'x', pivot: [0.5, 0.5], role: role,
+             motions: [{ type: 'blink' }] }]
+});
+
+const openScan = scan(G('auge', 'eyesOpen'));
+const closedScan = scan(G('lid', 'eyesClosed'));
+
+/* Same blink, same threshold (bl > 0.5) either way round - eyesOpen is
+ * hidden exactly when eyesClosed is not, so the two scans must find the same
+ * events, just on a differently named layer. */
+if (openScan.events.length !== closedScan.events.length) {
+  fail(`scanEvents: eyesOpen fand ${openScan.events.length} Blinks in 30 s, ` +
+       `eyesClosed fand ${closedScan.events.length} - bei gleichem Blink muessen es gleich viele sein`);
+}
+for (let idx = 0; idx < openScan.events.length; idx++) {
+  const a = openScan.events[idx], b = closedScan.events[idx];
+  if (Math.abs(a.a - b.a) > 1e-9 || Math.abs(a.b - b.b) > 1e-9) {
+    fail(`scanEvents: eyesOpen-Blink Nr.${idx} bei ${a.a.toFixed(3)}-${a.b.toFixed(3)} s, ` +
+         `eyesClosed bei ${b.a.toFixed(3)}-${b.b.toFixed(3)} s - sollten gleich sein`);
+  }
+  checks++;
+}
+if (!openScan.events.length) fail('scanEvents: die Testfigur blinzelt nie, der Test prueft nichts');
+checks += 2;
+
+/* And every eyesClosed event has to be the blink, not the pause between two
+ * blinks - the old formula reported spans up to 6.9 s here. */
+for (const ev of closedScan.events) {
+  const ms = (ev.b - ev.a) * 1000;
+  if (ms > 250) {
+    fail(`scanEvents: eyesClosed-Ereignis dauert ${ms.toFixed(0)} ms - das ist die Pause zwischen ` +
+         'zwei Blinzlern, nicht das Blinzeln');
+  }
+  checks++;
+}
+
+/* A layer that carries the blink motion but no eyesOpen/eyesClosed role of
+ * its own drives nothing visible (state[i].hidden reads its OWN role, not an
+ * ancestor's) - it must be named, not scanned as though it toggled. */
+const noRoleFig = {
+  size: { width: 100, height: 100 }, motion: {},
+  layers: [{ id: 'kopf', src: 'x', pivot: [0.5, 0.5], motions: [{ type: 'blink' }] }]
+};
+const noRoleScan = scan(noRoleFig);
+if (noRoleScan.watched.length) fail('scanEvents: eine Ebene ohne eyesOpen/eyesClosed wurde trotzdem gescannt');
+if (!noRoleScan.noRole || !noRoleScan.noRole.includes('kopf')) {
+  fail('scanEvents: "kopf" hat Blink ohne Rolle und fehlt in noRole');
+}
+checks += 2;
+console.log('Events: eyesClosed meldet das Blinzeln statt der Pause, eine Ebene ohne Rolle wird genannt statt gescannt.');
+
 /* --- 7. hostile input must not crash, hang or split the renderers -------- */
 
 const F = (layers, extra) => Object.assign(

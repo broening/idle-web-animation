@@ -2370,19 +2370,32 @@
     var f = state.figure;
     var layers = f.layers || [];
     var watch = [];
+    /* A layer that carries the blink motion but no eyesOpen/eyesClosed role
+     * of its own never has its `hidden` bit touched by the blink (idle.js
+     * sets state[i].hidden from state[i].role, not from an ancestor's) - it
+     * drives nothing visible, and scanning it just reports "always off".
+     * blinkTrouble() already warns about this on the Layer card; here it is
+     * kept out of the scan and named instead. */
+    var noRole = [];
     var i, j;
 
     for (i = 0; i < layers.length; i++) {
       var L = layers[i];
       var ms = L.motions || [];
       for (j = 0; j < ms.length; j++) {
-        if (ms[j].type === 'blink') watch.push({ id: L.id, kind: 'blink' });
+        if (ms[j].type === 'blink') {
+          if (L.role === 'eyesOpen' || L.role === 'eyesClosed') {
+            watch.push({ id: L.id, kind: 'blink', role: L.role });
+          } else {
+            noRole.push(L.id);
+          }
+        }
         if (ms[j].type === 'flipbook' && ms[j].mode === 'burst') {
           watch.push({ id: L.id, kind: 'burst' });
         }
       }
     }
-    if (!watch.length) return { events: [], watched: [] };
+    if (!watch.length) return { events: [], watched: [], noRole: noRole };
 
     var open = {}, events = [];
     var n = Math.round(seconds * fps);
@@ -2398,7 +2411,13 @@
       for (j = 0; j < watch.length; j++) {
         var w = watch[j];
         var s = by[w.id];
-        var on = w.kind === 'blink' ? !!s.hidden : (s.frame >= 0);
+        /* eyesOpen disappears while the lid is down, so "hidden" is the
+         * blink; eyesClosed is the other way round, drawn only while the
+         * lid is down, so it is the shut eye precisely when it is NOT
+         * hidden. Same rule idle.js's solve() uses for state[i].hidden. */
+        var on = w.kind === 'blink'
+          ? (w.role === 'eyesClosed' ? !s.hidden : !!s.hidden)
+          : (s.frame >= 0);
         var key = w.id + '|' + w.kind;
         if (on && !open[key]) open[key] = { id: w.id, kind: w.kind, a: t, b: t };
         else if (on) open[key].b = t;
@@ -2407,15 +2426,22 @@
     }
     for (var k in open) { if (open[k]) events.push(open[k]); }
     events.sort(function (a, b) { return a.a - b.a; });
-    return { events: events, watched: watch, seconds: seconds };
+    return { events: events, watched: watch, seconds: seconds, noRole: noRole };
   }
 
   function renderEvents() {
     var box = $('eventsOut');
     if (!state.figure) { box.textContent = 'No figure loaded.'; return; }
     var r = scanEvents(30, 60);
-    if (!r.watched.length) {
+    if (!r.watched.length && !r.noRole.length) {
       box.textContent = 'No blink and no burst in this figure.';
+      return;
+    }
+    var noRoleLines = r.noRole.map(function (id) {
+      return id + ' blink: no eyesOpen or eyesClosed role on this layer, nothing to scan.';
+    });
+    if (!r.watched.length) {
+      box.textContent = noRoleLines.join('\n');
       return;
     }
     var byId = {};
@@ -2425,13 +2451,15 @@
       if (!byId[k]) byId[k] = [];
       byId[k].push(e);
     }
-    var lines = [];
+    var lines = noRoleLines.slice();
     if (!r.events.length) {
       var names = r.watched.map(function (w) { return w.id + ' ' + w.kind; }).join(', ');
-      box.textContent = 'Watched ' + names + ' over ' + r.seconds +
+      lines.push('Watched ' + names + ' over ' + r.seconds +
         ' s and nothing fired.\n' +
-        'A blink only hides a layer that carries role "eyesOpen", on it or on ' +
-        'an ancestor.';
+        'A blink only hides a layer that carries role "eyesOpen" (or shows ' +
+        'one that carries "eyesClosed"), with the blink motion on that ' +
+        'layer or an ancestor.');
+      box.textContent = lines.join('\n');
       return;
     }
     for (var key in byId) {
@@ -2593,6 +2621,47 @@
             Math.min(nw, box[2] + CROP_MARGIN), Math.min(nh, box[3] + CROP_MARGIN)];
   }
 
+  /* export pixel scaling */
+  /* A few values in figure.json are canvas pixels, not the 0..1 fractions
+   * pivots and depths use, so they do not shrink on their own when a sized
+   * export scales `f.size` down. Left alone, Pedro exported at 1000 wide
+   * (master 1792, scale 0.558) keeps his master-size offsets, gaze reach and
+   * drift rise - all 1.8x too large against the smaller canvas.
+   *
+   * sx and sy can differ by a hair, because the exported height is rounded
+   * (Pedro at 1000 is 1000 x 558, not 1000 x 558.04 - see the comment above
+   * `sx`/`sy` in exportFigure). Every value below moves along one axis and
+   * takes that axis's factor, except gaze `pixels`: it drives both tx and ty
+   * at once (idle.js's gaze block) with no x/y split of its own, so it takes
+   * sx - the gap against sy is under a tenth of a percent and does not show.
+   *
+   * Pure and lifted out so tools/test-agreement.mjs can hold it to the same
+   * pixel keys the engine reads (MOTIONS.gaze, MOTIONS.drift) and the same
+   * rounding nudgeLayer already uses for offset. */
+  function scaleExportPixels(figure, sx, sy) {
+    function r1(v) { return Math.round(v * 10) / 10; }
+    var layers = figure.layers || [];
+    for (var i = 0; i < layers.length; i++) {
+      var L = layers[i];
+      if (Array.isArray(L.offset) && L.offset.length === 2) {
+        L.offset = [r1(L.offset[0] * sx), r1(L.offset[1] * sy)];
+      }
+      var motions = L.motions || [];
+      for (var j = 0; j < motions.length; j++) {
+        var m = motions[j];
+        if (m.type === 'gaze') {
+          if (typeof m.pixels === 'number') m.pixels = r1(m.pixels * sx);
+        } else if (m.type === 'drift') {
+          if (typeof m.dx === 'number') m.dx = r1(m.dx * sx);
+          if (typeof m.dy === 'number') m.dy = r1(m.dy * sy);
+          if (typeof m.wander === 'number') m.wander = r1(m.wander * sx);
+        }
+      }
+    }
+    return figure;
+  }
+  /* end of export pixel scaling */
+
   function exportFigure() {
     if (!state.images) return;
     var out = $('exportOut');
@@ -2730,6 +2799,10 @@
        * on an 800x1000 figure, and reading src.size.height when there is no
        * size at all threw. */
       f.size = { width: target, height: Math.round(h * scale) };
+      /* offset, gaze pixels and drift dx/dy/wander are canvas pixels in the
+       * player, not fractions of the canvas - they do not shrink on their
+       * own just because f.size did. */
+      scaleExportPixels(f, sx, sy);
     }
     delete f.sources;
 
