@@ -128,8 +128,30 @@ Only needed if a layerize result comes back with a hole.
 | `fal-ai/flux-2/klein/9b/edit` | fal | $0.011 / megapixel | Cheapest general edit. |
 | `fal-ai/sam-3/image` | fal | $0.005 / run | Text-promptable masks, if a layer has to be cut by hand after all. |
 
-**Verdict:** `bria/eraser` before generic inpainting. Removing an arm and
-having the torso behind it reconstructed is object removal, not painting.
+**Verdict: not a fallback. This step is required.** Measured on the priest:
+Seedream's base plate is black across **85 %** of the area its own lifted
+layers cover, and 82.3 % inside the hand's box. It cuts holes; it does not
+paint behind them. It also painted the source's transparent background solid
+black - 53.3 % of the canvas.
+
+`fal-ai/bria/eraser` with `preserve_alpha: true` fixes both in one call for
+$0.04: erase the moving parts from the flat source, keep the alpha. The result
+came back 46.7 % opaque, exactly matching the source, with both shoulders, the
+lapels, the white collar and the watch chain running continuously through the
+places the hand and arm had been.
+
+Dilate the mask by about 4 px first, or a one-pixel rim of the erased part
+survives at the edge.
+
+**Then feather.** Layerize output has hard alpha - only 0.18 to 0.31 % of each
+layer's pixels are semi-transparent. Where a layer's edge is the figure's real
+silhouette that is fine; where it is an internal cut it is not. The priest's
+head layer ended in a hard horizontal line across the neck, which slid over
+the base as a second contour behind the face the moment the head moved.
+`tools/feather-layers.py` erodes then blurs each layer's alpha - eroding first,
+because blurring alone spreads the layer into pixels it has no colour for and
+leaves a dark halo. About 1 % soft pixels, under 1.2 % area lost, and the seam
+is gone.
 
 ## Job 3 — Detail that does not exist in the flat image
 
