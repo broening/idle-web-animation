@@ -793,3 +793,69 @@ html, body {
   min-width: 48px;
   text-align: right;
 }
+
+/* ---------------- marking ----------------
+ *
+ * The mask sits exactly where the stage sits, at the figure's own
+ * resolution, and studio.js copies the stage's transform onto it every time
+ * the view moves. Same box, same scale, same pan - so a stroke lands on the
+ * pixel it looks like it lands on at any zoom.
+ */
+.marks {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 50% 50%;
+  opacity: 0.45;
+  /* The overlay above takes every pointer event; this only has to be seen. */
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+/* Crosshair aims at a joint. A brush wants to show its own size, and no
+ * cursor can, so this at least says the button does something else now. */
+.overlay.painting { cursor: cell; }
+
+.parts li { gap: 6px; }
+
+.parts .chip {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
+.parts .txt { font-size: 12px; padding: 4px 6px; }
+
+.parts .pv { min-width: 34px; text-align: right; }
+
+.parts li .x {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.parts li .x:hover { background: var(--bg-2); color: var(--bad); }
+
+.markrow { margin: 8px 10px; }
+
+#markPanel .note,
+#markPanel .out { margin-left: 10px; margin-right: 10px; }
+
+/* A part on its way in sits fully opaque - it is a real thing being put in a
+ * real place, not an annotation over the picture like the marks are. */
+.marks.place { opacity: 1; }
+
+/* A button that removes something says so before it is pressed, and again
+ * while it waits for the second press. .btn.wide is already defined
+ * further up and does the right thing. */
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.danger:hover { border-color: var(--bad); background: var(--bg-2); }
+.btn.danger:not(.ghost) { background: var(--bad); color: var(--bg); border-color: var(--bad); font-weight: 600; }

@@ -232,6 +232,51 @@ for (const [fig, muster] of [
 }
 console.log(`Elternkette: Ring, fehlender Elternteil und doppelte id werden abgewiesen.`);
 
+/* --- 6d. the part vocabulary the studio offers ---------------------------
+ *
+ * A marked part is named by hand, and the name is the whole rig: "kopf"
+ * gives a neck pivot and a gaze, an unrecognised word gives a whisper of
+ * sway and nothing else. The studio offers the words while someone types,
+ * and gets them from GET /_vocab - but it carries a built-in list for a
+ * read-only server, and that list is a second copy of a table in Python.
+ *
+ * So the copy is held to the original: it may not miss a word that works,
+ * and it may not offer one that does not. */
+
+const importer = readFileSync(join(root, 'tools', 'import-layers.py'), 'utf8');
+
+const kindsBlock = importer.slice(importer.indexOf('KINDS = ['),
+                                  importer.indexOf('def kind_of'));
+const echteWorte = new Set();
+for (const m of kindsBlock.matchAll(/\(\s*"(\w+)"\s*,\s*\(([^)]*)\)\s*\)/g)) {
+  for (const w of m[2].matchAll(/"(\w+)"/g)) echteWorte.add(w[1]);
+}
+if (echteWorte.size < 20) fail(`KINDS aus import-layers.py nicht gelesen, nur ${echteWorte.size} Woerter`);
+
+const germanBlock = importer.slice(importer.indexOf('GERMAN = {'),
+                                   importer.indexOf('def canon'));
+const deutscheWorte = new Set(
+  [...germanBlock.matchAll(/"([a-z]+)"\s*:/g)].map(m => m[1]));
+
+const fallbackBlock = studio.slice(studio.indexOf('var VOCAB_FALLBACK = ['),
+                                   studio.indexOf('function loadVocab'));
+const fallback = new Set(
+  [...fallbackBlock.matchAll(/'([a-z-]+)'/g)].map(m => m[1]));
+
+for (const w of echteWorte) {
+  if (!fallback.has(w)) {
+    fail(`import-layers.py rigged "${w}", die Notliste des Studios kennt es nicht`);
+  }
+  checks++;
+}
+for (const w of fallback) {
+  if (!echteWorte.has(w) && !deutscheWorte.has(w)) {
+    fail(`das Studio bietet "${w}" an, import-layers.py macht damit nichts`);
+  }
+  checks++;
+}
+console.log(`Teilwoerter: ${echteWorte.size} aus dem Importer, Notliste deckt sie.`);
+
 /* --- 7. hostile input must not crash, hang or split the renderers -------- */
 
 const F = (layers, extra) => Object.assign(

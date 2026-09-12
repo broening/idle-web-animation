@@ -7,7 +7,12 @@ same files the same way and adds three things:
 
     PUT  /figures/<figure>/<file>   write a layer or a figure.json
     POST /_import?name=<figure>     run tools/import-layers.py on it
+    POST /_cut?name=<figure>        run tools/cut-by-marks.py on it
     DELETE /figures/<figure>/<file> remove one file
+    DELETE /_figure?name=<figure>   remove the whole folder and its index.json entry
+    GET  /_files?name=<figure>      list a figure's own files, as JSON
+    GET  /_figures                  list every figure folder, as JSON
+    GET  /_vocab                    the part vocabulary import-layers.py rigs by
 
 Standard library only, like the rest of the tools here. Nothing new to install
 and nothing to build.
@@ -22,6 +27,7 @@ it is only local anyway" is how that stops being true.
 import http.server
 import json
 import re
+import shutil
 import subprocess
 import sys
 import urllib.parse
@@ -30,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FIGURES = (ROOT / "figures").resolve()
 IMPORTER = ROOT / "tools" / "import-layers.py"
+CUTTER = ROOT / "tools" / "cut-by-marks.py"
 
 MAX_BODY = 64 * 1024 * 1024          # one layer, generously
 NAME_OK = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -118,8 +125,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for a method it does not know, and a proxy in between could answer
         anything. A route that only exists here is a straight answer.
         """
-        if self.path.split("?", 1)[0] == "/_studio":
+        route = self.path.split("?", 1)[0]
+        if route == "/_studio":
             return self.reply(200, {"write": True, "root": str(ROOT)})
+        # The part vocabulary, straight out of the importer that owns it. The
+        # studio offers these words while a marked part is being named, and a
+        # second copy of the list in JavaScript is a copy that drifts.
+        # The names in one figure folder, as JSON.
+        #
+        # There is a directory listing already, and the studio used to read
+        # it. It cannot be trusted: on this machine the HTML listing for a
+        # folder of twelve files comes back cut off after six, mid-tag, with
+        # a Content-Length that matches the truncated body - and it does the
+        # same under a plain `python -m http.server`, so it is not something
+        # this file did. os.listdir is right either way, so ask it directly.
+        if route == "/_files":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = q.get("name", [""])[0]
+            if not NAME_OK.match(name):
+                return self.reply(400, {"error": "unzulaessiger Figurenname"})
+            folder = (FIGURES / name).resolve()
+            try:
+                folder.relative_to(FIGURES)
+            except ValueError:
+                return self.reply(400, {"error": "unzulaessiger Figurenname"})
+            if not folder.is_dir():
+                return self.reply(404, {"error": "figures/%s gibt es nicht" % name})
+            return self.reply(200, {
+                "files": sorted(p.name for p in folder.iterdir() if p.is_file()),
+                "layers": sorted(p.name for p in (folder / "layers").iterdir()
+                                 if p.is_file()) if (folder / "layers").is_dir() else [],
+            })
+
+        # Every figure folder there is, straight from the filesystem. The
+        # studio normally reads figures/index.json instead, which is curated
+        # order rather than disk truth - but when that file is missing it
+        # used to fall back on parsing the directory listing's HTML, and that
+        # listing has been seen arriving truncated mid-tag on this machine,
+        # for figures/ the same as for one figure's own folder (see
+        # /_files). This is the same fix, one level up.
+        if route == "/_figures":
+            return self.reply(200, {
+                "names": sorted(p.name for p in FIGURES.iterdir() if p.is_dir())
+            })
+
+        if route == "/_vocab":
+            try:
+                r = subprocess.run(
+                    [sys.executable, str(IMPORTER), "--vocab"],
+                    capture_output=True, text=True, timeout=30, cwd=str(ROOT))
+            except subprocess.TimeoutExpired:
+                return self.reply(504, {"error": "import-layers.py lief zu lange"})
+            if r.returncode != 0:
+                return self.reply(500, {"error": r.stderr})
+            return self.reply(200, json.loads(r.stdout))
         super().do_GET()
 
     def do_PUT(self):
@@ -143,6 +202,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                          "bytes": len(body)})
 
     def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+
+        # A whole figure, folder and all. Not reachable through safe_target
+        # on purpose: that function hands back exactly one file, one suffix
+        # at a time, and has no notion of a directory - which is the whole
+        # of what keeps a DELETE on /figures/<fig>/<file> from ever being
+        # asked to remove a folder by accident.
+        if parsed.path == "/_figure":
+            folder, name = self.figure_folder(parsed.query)
+            if folder is None:
+                return
+            shutil.rmtree(folder)
+            # Best-effort: the folder is already gone either way, and a
+            # figure.json that failed to parse could not have listed this
+            # name reliably in the first place.
+            idx_path = FIGURES / "index.json"
+            try:
+                idx = json.loads(idx_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                idx = None
+            if isinstance(idx, list) and name in idx:
+                idx = [n for n in idx if n != name]
+                idx_path.write_text(json.dumps(idx) + "\n", encoding="utf-8")
+            return self.reply(200, {"ok": True})
+
         target = safe_target(self.path)
         if target is None:
             return self.reply(403, {"error": "ausserhalb von figures/"})
@@ -151,34 +235,88 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         target.unlink()
         self.reply(200, {"ok": True})
 
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != "/_import":
-            return self.reply(404, {"error": "unbekannt"})
-        name = urllib.parse.parse_qs(parsed.query).get("name", [""])[0]
+    def figure_folder(self, query):
+        """The folder a /_cut, /_import or /_figure call names, or None after
+        replying."""
+        name = urllib.parse.parse_qs(query).get("name", [""])[0]
         if not NAME_OK.match(name):
-            return self.reply(400, {"error": "unzulaessiger Figurenname"})
+            # Saying which name and what the rule is, because the studio can
+            # hand over a name it took off a file, and "unzulaessig" alone
+            # left nothing to act on.
+            self.reply(400, {"error": 'unzulaessiger Figurenname "%s": erlaubt '
+                                      'sind a-z, 0-9, Punkt, Bindestrich und '
+                                      'Unterstrich, und der erste Buchstabe '
+                                      'muss ein Buchstabe oder eine Ziffer '
+                                      'sein' % name})
+            return None, None
         folder = (FIGURES / name).resolve()
         try:
             folder.relative_to(FIGURES)
         except ValueError:
-            return self.reply(400, {"error": "unzulaessiger Figurenname"})
+            # Saying which name and what the rule is, because the studio can
+            # hand over a name it took off a file, and "unzulaessig" alone
+            # left nothing to act on.
+            self.reply(400, {"error": 'unzulaessiger Figurenname "%s": erlaubt '
+                                      'sind a-z, 0-9, Punkt, Bindestrich und '
+                                      'Unterstrich, und der erste Buchstabe '
+                                      'muss ein Buchstabe oder eine Ziffer '
+                                      'sein' % name})
+            return None, None
         if not folder.is_dir():
-            return self.reply(404, {"error": "figures/%s gibt es nicht" % name})
+            self.reply(404, {"error": "figures/%s gibt es nicht" % name})
+            return None, None
+        return folder, name
 
-        # The importer keeps an existing rig and only replaces the pixels, so
-        # calling it again after an upload is safe by construction. rewrite=1
-        # is the deliberate exception, and the studio asks before sending it.
-        cmd = [sys.executable, str(IMPORTER), str(folder), name]
-        if urllib.parse.parse_qs(parsed.query).get("rewrite", [""])[0] == "1":
-            cmd.append("--rewrite-rig")
+    def run_tool(self, cmd):
         try:
             r = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=300, cwd=str(ROOT))
         except subprocess.TimeoutExpired:
-            return self.reply(504, {"error": "import-layers.py lief zu lange"})
+            return self.reply(504, {"error": "%s lief zu lange" % Path(cmd[1]).name})
         self.reply(200 if r.returncode == 0 else 500,
                    {"ok": r.returncode == 0, "out": r.stdout, "err": r.stderr})
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        # keep_blank_values, because an empty value is a real answer here:
+        # rest= means "throw the leftovers away", and parse_qs drops empty
+        # values by default - so the studio's checkbox did nothing at all.
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+        if parsed.path == "/_import":
+            folder, name = self.figure_folder(parsed.query)
+            if folder is None:
+                return
+            # The importer keeps an existing rig and only replaces the pixels,
+            # so calling it again after an upload is safe by construction.
+            # rewrite=1 is the deliberate exception, and the studio asks
+            # before sending it.
+            cmd = [sys.executable, str(IMPORTER), str(folder), name]
+            if query.get("rewrite", [""])[0] == "1":
+                cmd.append("--rewrite-rig")
+            return self.run_tool(cmd)
+
+        # Cut the flat picture along the marks painted over it. Writes the
+        # numbered part files next to source.png; the studio then calls
+        # /_import on the same folder, which is the path that already exists
+        # for parts that arrived any other way.
+        if parsed.path == "/_cut":
+            folder, name = self.figure_folder(parsed.query)
+            if folder is None:
+                return
+            cmd = [sys.executable, str(CUTTER), str(folder), name]
+            # Passed as separate argv entries, never through a shell, and the
+            # cutter parses each as a number - so a value from a query string
+            # cannot become an option of its own.
+            for flag in ("edge", "grow", "edge-cost"):
+                v = query.get(flag.replace("-", "_"), [""])[0]
+                if v:
+                    cmd += ["--" + flag, v]
+            if query.get("rest", [None])[0] is not None:
+                cmd += ["--rest", query["rest"][0]]
+            return self.run_tool(cmd)
+
+        self.reply(404, {"error": "unbekannt"})
 
     def log_request(self, code="-", size="-"):
         # One line per write, silence for the hundreds of GETs a reload makes.

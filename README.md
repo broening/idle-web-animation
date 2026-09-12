@@ -47,6 +47,7 @@ studio/
 tools/
   serve.py              the studio's dev server - reads like http.server, writes
   import-layers.py      a folder of already-cut layers -> a rigged figure
+  cut-by-marks.py       one flat picture + painted marks -> the parts
   split-particles.py    one layer of specks -> groups that can move apart
   cut-glow.py           a lit part -> a screen-blend overlay that can pulse
   flatten.py            rigged figure -> the one flat PNG it came from
@@ -90,13 +91,87 @@ the stage. The dot is a way of looking, not a property of the figure — the
 contact sheet ignores it, because the sheet's job is to show what ships.
 
 **Save** writes `figure.json` back where it came from. **Reset** throws away
-what you have changed and reloads that file. Both need `tools/serve.py`.
+what you have changed and reloads that file. **Delete figure**, two clicks
+like removing a layer, throws the whole folder away — every image, the rig,
+`figures/index.json`'s entry for it. A figure that only lives in this page
+(dropped in from **Start from a flat image** and never saved) needs no
+server call for that: discarding it just forgets it, and any other unsaved
+figure you have not yet saved stays exactly where it was. All three need
+`tools/serve.py`.
+
+A folder can also disappear the ordinary way — deleted by hand, moved, a git
+checkout that dropped it — without the studio ever being asked. The list
+notices on its own: a figure whose `figure.json` no longer answers is quietly
+dropped from the picker and from `index.json`, with one line saying which one
+it was. Nothing is guessed back into existence; if every figure listed turns
+out to be missing, the studio says so and waits for **Start from a flat
+image** or **Create**.
 
 The studio never shows the figure's own backdrop. When you are judging how
 something moves, a painted scene behind it is noise. Pick a stage colour
 instead, or leave it transparent and read the alpha edges against the
 checkerboard. The `background` field stays in `figure.json` for the target
 that wants it.
+
+### When all you have is one flat picture
+
+Nothing splits a drawing into parts on its own. A layerize model does not know
+that a collar belongs to the chest and a strap does not, and `docs/cutting.md`
+measures what happens when you let it try. What it cannot know, you can say in
+five seconds with a brush.
+
+Press **Mark** under the stage and paint one rough blob per part, each in its
+own colour, then name them. The name is the whole rig: `kopf` or `head` gives
+a neck pivot and a gaze, `arm` a shoulder and a sway. **Cut** then splits the
+picture along your blobs and hands the parts to the same importer everything
+else goes through.
+
+The boundary is not your blob, it comes out of the drawing: each blob spreads
+outwards and pays extra to cross an edge the picture already has. How far it
+may spread at all is the **reach** slider, and it is the setting that decides
+what a cut even is. Small, and the parts follow your brush. Large, and the
+marks divide the whole figure between them, with the seams halfway between
+your blobs rather than on the drawing.
+
+Whatever no mark reached becomes one layer at the back, or is thrown away, so
+you can take two limbs out of this picture and the others out of a different
+one. Marked close to their edges at a 24 px reach, the eight parts of `baer`
+came back at **0.9967 IoU** against the layers they were flattened from, in
+about two seconds.
+
+Three limits worth knowing before you start. A thin part next to a fat one
+has to be marked along its length, not with a dot. A bigger reach is not a
+better one: on marks painted 10 px inside the true shape, a 15 px reach scored
+0.95 and a 90 px reach 0.65. And a flat picture only contains what is
+**visible** - a pupil with six visible pixels cannot be cut out at all, and
+what sits behind a part is simply not in the file, so a part that moves far
+shows a hole. That is why `docs/cutting.md` prefers asking a model to draw the
+picture again without the part. Marking is the cheap route, not the good
+one.
+
+### Parts out of more than one picture
+
+One picture rarely gives every part at its best. Cut the first for the parts
+it does well, cut a second for the rest, and put them on one figure.
+
+Cut each picture into its own figure, with **keep what no mark reached**
+switched off so you get only the parts you marked. Then open the figure you
+are building and use the **Add part** card: pick the other figure, pick the
+layer, press **Bring it in**. It appears on the stage; drag it where it
+belongs and set its size, then press **Place**.
+
+The same card takes a **loose image file** of any size, for a part that never
+belonged to a figure. **Upload parts…** at the top is the other way in and the
+faster one when the images already fit: it takes several at once, but every one
+has to be the figure's exact canvas size.
+
+The two pictures do not have to be the same size. The part is scaled and
+baked into this figure's canvas, so what ships is an ordinary full-canvas
+layer and `idle.js` learns nothing new - which is also why there is no
+per-layer scale in `figure.json`.
+
+A placed part arrives with a sway and no parent, because nothing about a
+picture says where it hangs. One dropdown in the Layer card fixes that.
 
 ### When the parts arrive already cut
 
@@ -148,6 +223,11 @@ opened to build one.
   layer is selected. The `parent` list leaves out every layer that already
   hangs below this one, so the chain cannot be closed into a loop. It also
   says when a `blink` has no eye role to drive, and the other way round.
+- **Removing a layer** is at the bottom of the Layer card. It takes two
+  clicks, and it deletes the layer's images from the figure folder as well:
+  leaving the file behind would put the layer straight back on the next cut
+  or upload. Anything that hung off the removed layer hangs off what it hung
+  off.
 - **Motion card** — add or remove a motion block. Each of the eight types once
   per layer: two blinks on one layer read the same clock and fire as one, and
   two drifts make the layer jump between rises.

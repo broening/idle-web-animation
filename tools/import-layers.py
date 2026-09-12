@@ -33,6 +33,13 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 FIGURES = ROOT / "figures"
 
+# Images that live in a figure folder but are not parts of the figure.
+# `source.png` is the flat picture (tools/flatten.py writes it, the studio
+# uploads it) and `marks.png` is what somebody painted over it to say which
+# region is which. Without this both came in as layers, so a figure cut into
+# eight parts arrived with ten, two of them the whole picture.
+WORKING = {"source", "marks"}
+
 # German names for the same parts. The vocabulary in layerize-to-figure.py is
 # English because a model wrote those names; here a person does.
 GERMAN = {
@@ -85,22 +92,51 @@ def alpha_box(path):
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
+# Which words make which kind. First match wins, which is why "hand" is
+# listed above "arm": a sleeve that ends in a hand is a hand.
+#
+# This used to be a chain of ifs. It is a table now because the studio needs
+# to offer these words while someone is naming a marked part, and a second
+# copy of the list in JavaScript is a copy that drifts. --vocab prints it.
+KINDS = [
+    ("eyes",  ("eye", "lens")),
+    ("head",  ("head", "hair", "face", "hat")),
+    ("hand",  ("hand", "finger", "rifle", "gun")),
+    ("arm",   ("arm", "sleeve", "shoulder")),
+    ("chest", ("chest", "collar", "torso", "coat")),
+    ("cloak", ("cloak", "cape", "scarf", "strap")),
+    ("belly", ("belly", "leg", "waist", "lower")),
+]
+
+
 def kind_of(n):
-    if "eye" in n or "lens" in n:
-        return "eyes"
-    if "head" in n or "hair" in n or "face" in n or "hat" in n:
-        return "head"
-    if "hand" in n or "finger" in n or "rifle" in n or "gun" in n:
-        return "hand"
-    if "arm" in n or "sleeve" in n or "shoulder" in n:
-        return "arm"
-    if "chest" in n or "collar" in n or "torso" in n or "coat" in n:
-        return "chest"
-    if "cloak" in n or "cape" in n or "scarf" in n or "strap" in n:
-        return "cloak"
-    if "belly" in n or "leg" in n or "waist" in n or "lower" in n:
-        return "belly"
+    for kind, words in KINDS:
+        for w in words:
+            if w in n:
+                return kind
     return None
+
+
+def vocabulary():
+    """Every word that gets a part a rig, grouped by what it becomes.
+
+    The German entries are worked out by running them through the same
+    canon() and kind_of() the importer uses, rather than being listed a
+    second time - so a word can never appear here and behave differently
+    when a file is actually named after it.
+    """
+    german = {}
+    for de in GERMAN:
+        k = kind_of(canon(de))
+        if k:
+            german.setdefault(k, []).append(de)
+    return {
+        "kinds": [{"kind": k,
+                   "english": sorted(w),
+                   "german": sorted(german.get(k, []))}
+                  for k, w in KINDS],
+        "parents": PARENT_OF,
+    }
 
 
 """Who hangs off whom. Anatomy, not the order the files happened to arrive in."""
@@ -195,7 +231,7 @@ def copy_parts(files, names, out):
     return copied, boxes
 
 
-def refresh(fig, copied, out, W, H):
+def refresh(fig, copied, boxes, out, W, H):
     """Second run and later: replace the pixels, leave the rig alone.
 
     Re-guessing the rig here would be the worst thing this tool could do. The
@@ -223,11 +259,27 @@ def refresh(fig, copied, out, W, H):
         print("    -> tools/cut-glow.py noch einmal laufen lassen, "
               "wenn die Quelle sich geaendert hat")
 
-    neu = sorted(set(copied) - have)
+    # A part that was not here last time gets a layer of its own, rigged the
+    # same way a first run would rig it, and slotted into the draw order the
+    # file names ask for. It used to be reported and left out, so the only
+    # ways to add one part were editing figure.json by hand or --rewrite-rig,
+    # which throws away every pivot anybody ever corrected. Adding a part is
+    # the normal case when it was cut out of a second picture.
+    neu = [sid for sid in copied if sid not in have]
     if neu:
-        print("  neue Datei ohne Ebene in figure.json: %s" % ", ".join(neu))
-        print("    -> von Hand eintragen, oder --rewrite-rig "
-              "(das wirft den Rig weg)")
+        rank = {sid: i for i, sid in enumerate(copied)}
+        rest, result = list(neu), []
+        for L in fig.get("layers", []):
+            while rest and L["id"] in rank and rank[rest[0]] < rank[L["id"]]:
+                sid = rest.pop(0)
+                rel, part = copied[sid]
+                result.append(make_layer(sid, rel, part, boxes[sid], W, H))
+            result.append(L)
+        for sid in rest:
+            rel, part = copied[sid]
+            result.append(make_layer(sid, rel, part, boxes[sid], W, H))
+        fig["layers"] = result
+        print("  neu dazugekommen: %s" % ", ".join(sorted(neu)))
 
     missing = [L["id"] for L in fig.get("layers", [])
                if not (out / L["src"]).exists()]
@@ -249,27 +301,34 @@ def refresh(fig, copied, out, W, H):
     return fig
 
 
+def make_layer(sid, rel, part, box, W, H):
+    """One rigged layer from one part. Shared by the first run and by a
+    later one that finds a part it has not seen before."""
+    n = canon(part)
+    pivot, motions, role, depth = rig_for(n, box, W, H)
+    L = {
+        "id": sid,
+        "src": rel,
+        "alt": part,
+        "pivot": [round(pivot[0], 3), round(pivot[1], 3)],
+        "depth": depth,
+        "motions": motions,
+    }
+    if role:
+        L["role"] = role
+    print("  %-24s kasten %s  pivot %s  %s"
+          % (sid, box, L["pivot"], motions[0]["type"]))
+    return L
+
+
 def build(copied, boxes, name, W, H):
     """First run: guess a rig from the boxes and the names."""
     layers, by_kind = [], {}
     for sid in copied:
         rel, part = copied[sid]
-        n = canon(part)
-        pivot, motions, role, depth = rig_for(n, boxes[sid], W, H)
-        L = {
-            "id": sid,
-            "src": rel,
-            "alt": part,
-            "pivot": [round(pivot[0], 3), round(pivot[1], 3)],
-            "depth": depth,
-            "motions": motions,
-        }
-        if role:
-            L["role"] = role
+        L = make_layer(sid, rel, part, boxes[sid], W, H)
         layers.append(L)
-        by_kind.setdefault(kind_of(n), sid)
-        print("  %-24s kasten %s  pivot %s  %s"
-              % (sid, boxes[sid], L["pivot"], motions[0]["type"]))
+        by_kind.setdefault(kind_of(canon(part)), sid)
 
     link_parents(layers, by_kind)
     return {
@@ -285,8 +344,14 @@ def build(copied, boxes, name, W, H):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("folder", help="folder of full-canvas images, front first")
-    ap.add_argument("name", help="figure name, becomes figures/<name>/")
+    ap.add_argument("folder", nargs="?",
+                    help="folder of full-canvas images, front first")
+    ap.add_argument("name", nargs="?",
+                    help="figure name, becomes figures/<name>/")
+    ap.add_argument("--vocab", action="store_true",
+                    help="print the part vocabulary as JSON and stop. The "
+                         "studio serves this so its name field offers the "
+                         "words that actually produce a rig.")
     ap.add_argument("--names", default="",
                     help="comma separated part names, front first, one per file")
     ap.add_argument("--rewrite-rig", action="store_true",
@@ -295,9 +360,17 @@ def main():
                          "the pixels are refreshed.")
     args = ap.parse_args()
 
+    if args.vocab:
+        print(json.dumps(vocabulary(), indent=2))
+        return
+
+    if not args.folder or not args.name:
+        sys.exit("folder und name werden gebraucht (oder --vocab)")
+
     src = Path(args.folder).expanduser()
     files = sorted(p for p in src.iterdir()
                    if p.is_file() and not p.name.startswith(".")
+                   and p.stem.lower() not in WORKING
                    and p.suffix.lower() in (".png", ".webp", ".jpg", ".jpeg"))
     if not files:
         sys.exit("keine Bilder in %s" % src)
@@ -328,7 +401,7 @@ def main():
     # Treating it as one produced a figure with the images copied and nothing
     # wired up, which looks exactly like the import silently failing.
     if vorhanden and vorhanden.get("layers") and not args.rewrite_rig:
-        fig = refresh(vorhanden, copied, out, W, H)
+        fig = refresh(vorhanden, copied, boxes, out, W, H)
         wie = "Rig behalten"
     else:
         fig = build(copied, boxes, args.name, W, H)

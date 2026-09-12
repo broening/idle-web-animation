@@ -20,3 +20,6 @@ desktop.ini
 
 # unlazy gates for a single build section
 gates/
+
+# Python bytecode
+__pycache__/

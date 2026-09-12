@@ -24,6 +24,8 @@
     dragging: false,
     nudging: null,      /* last stage point of an alt-drag, in canvas pixels */
     panning: null,      /* pointer and pan at the start of a view drag */
+    painting: false,    /* a brush stroke is in progress on the mask */
+    placing: null,      /* grab offset while a part is being placed */
     window: 8,
     stageBg: null,  /* null = transparent, else a css colour */
     unsaved: {}     /* figures that live only in this page, by name */
@@ -37,7 +39,21 @@
     return fetch(FIGURES_ROOT + 'index.json')
       .then(function (r) { return r.ok ? r.json() : Promise.reject(0); })
       .catch(function () {
-        /* python -m http.server serves a directory listing. Parse it. */
+        /* No curated index.json - ask our own server for the real folders,
+         * rather than reach straight for the directory listing below. A
+         * listing's HTML has been seen arriving truncated mid-tag on this
+         * machine (see /_files and /_figures in serve.py), which turned a
+         * folder of twelve files into six and would just as quietly turn a
+         * figures/ of five figures into two. */
+        return fetch('/_figures')
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(0); })
+          .then(function (d) { return d.names; });
+      })
+      .catch(function () {
+        /* Neither of the above: a plain `python -m http.server`, or our own
+         * server started from some other working directory. The one thing
+         * left to try, known unreliable on this machine but better than
+         * nothing on a server that has no other route to ask. */
         return fetch(FIGURES_ROOT)
           .then(function (r) { return r.text(); })
           .then(function (html) {
@@ -53,6 +69,43 @@
             return out;
           });
       });
+  }
+
+  /* Which of these names still have a figure.json to load. A folder can
+   * vanish outside the studio entirely - deleted by hand, moved, a git
+   * checkout that dropped it - and figures/index.json has no way to find
+   * out until something actually asks. A HEAD works on any server, ours or
+   * a plain `python -m http.server`, because it is nothing more than the
+   * request loadFigure() already makes. */
+  function partitionByExistence(names) {
+    return Promise.all(names.map(function (n) {
+      return fetch(FIGURES_ROOT + n + '/figure.json', { method: 'HEAD' })
+        .then(function (r) { return r.ok; })
+        .catch(function () { return false; });
+    })).then(function (alive) {
+      var live = [], gone = [];
+      for (var i = 0; i < names.length; i++) (alive[i] ? live : gone).push(names[i]);
+      return { live: live, gone: gone };
+    });
+  }
+
+  /* Best-effort tidy-up, never load-bearing: the list already works from
+   * `live` regardless of whether this succeeds. Only touches index.json when
+   * it actually names one of the missing figures, so it never manufactures
+   * one out of a directory-listing fallback or overwrites a curation the
+   * file does not otherwise have. */
+  function forgetGhosts(names) {
+    if (!state.canWrite || !names.length) return;
+    fetch(FIGURES_ROOT + 'index.json')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (idx) {
+        if (!Array.isArray(idx)) return;
+        var kept = idx.filter(function (n) { return names.indexOf(n) < 0; });
+        if (kept.length === idx.length) return;
+        return putFile(FIGURES_ROOT + 'index.json',
+                       JSON.stringify(kept) + '\n', 'application/json');
+      })
+      .catch(function () {});
   }
 
   /* keepDirty: mount a figure that did NOT come off the disk, so the Save
@@ -89,6 +142,14 @@
     buildLayerCard();
     buildMotionControls();
     buildIouTruthList();
+    /* A mask belongs to one picture. Carrying it to the next figure
+     * would paint marks over something they were never drawn on. */
+    marks.parts = [];
+    if (marks.ctx) marks.ctx.clearRect(0, 0, $('marks').width, $('marks').height);
+    sizeMarks();
+    if (marks.on) setMarkMode(false);
+    clearPlace();
+    refreshAddFrom();
     refitStage();
     $('sheet').width = 0;
     $('eventsOut').textContent = '';
@@ -121,9 +182,17 @@
    * ------------------------------------------------------------------ */
 
   function newFromImage(file) {
+    /* Kept because the cutter reads the flat picture off disk, and
+     * this is the only copy of it the page ever has. */
+    marks.sourceFile = file;
     var url = URL.createObjectURL(file);
     return loadImg(url).then(function (img) {
-      var name = file.name.replace(/\.[^.]+$/, '') || 'figure';
+      /* The name came off a file name, and a file name is allowed things a
+       * folder on this server is not: capitals, spaces, umlauts. It used to
+       * come straight through, and the first request that carried it - the
+       * cut - came back "unzulaessiger Figurenname" with nothing to say
+       * which name or why. `Kriegerin II.png` becomes `kriegerin-ii`. */
+      var name = figureName(file.name.replace(/\.[^.]+$/, '')) || 'figur';
       var ext = (file.name.match(/\.([a-zA-Z0-9]+)$/) || [null, 'png'])[1].toLowerCase();
       var path = 'layers/whole.' + ext;
       var fig = {
@@ -181,6 +250,19 @@
 
   var NAME_OK = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
+  /* Fold any text into a name this server will accept as a folder. The same
+   * rule as NAME_OK above and as serve.py, applied instead of tested, so a
+   * name the studio makes up itself can never be one the server refuses. */
+  function figureName(text) {
+    var s = String(text || '').toLowerCase()
+      .replace(/[äæ]/g, 'ae').replace(/ö/g, 'oe')
+      .replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+      .replace(/[^a-z0-9._-]+/g, '-');
+    while (s.indexOf('--') >= 0) s = s.replace(/--/g, '-');
+    s = s.replace(/^[-._]+/, '').replace(/[-._]+$/, '');
+    return s.slice(0, 64);
+  }
+
   function say(msg) { $('figureOut').textContent = msg || ''; }
 
   function figureJson() { return JSON.stringify(state.figure, null, 2) + '\n'; }
@@ -195,19 +277,38 @@
     refreshSaveState();
   }
 
-  function onDisk() { return state.name && state.name !== UNSAVED; }
+  /* `state.base` is '' for a figure that only exists in this page (an
+   * upload from "Flat image...") and a real path for one that was actually
+   * read off the server, so its truthiness already says which this is - no
+   * name comparison needed, and none of the ambiguity one would have: two
+   * figures can share a name (an unsaved draft and an on-disk figure of the
+   * same name are different values under different dropdown options), but
+   * the currently mounted one is never in doubt about where it came from.
+   *
+   * This used to compare state.name against the literal sentinel UNSAVED,
+   * which is never what state.name actually holds - the sentinel is only
+   * ever a *prefix* on a <select> option's value (UNSAVED + name), so this
+   * check was true for every figure, on disk or not. Save then wrote a
+   * figure.json for an unsaved flat image straight to
+   * figures/<name>/figure.json, pointing at a layer image that was never
+   * uploaded - the blob: URL holding it dies with the tab. */
+  function onDisk() { return !!(state.name && state.base); }
 
   function refreshSaveState() {
     $('saveBtn').disabled = !state.canWrite || !onDisk();
     $('resetBtn').disabled = !onDisk();
     $('newFigureBtn').disabled = !state.canWrite;
     $('partsInput').disabled = !state.canWrite;
+    /* Discarding an unsaved figure needs no server at all, so this is not
+     * gated on state.canWrite - only on there being a figure to discard. */
+    $('deleteFigureBtn').disabled = !state.figure;
     var s = $('serverState');
     if (!state.canWrite) {
       s.textContent = 'Read-only server. Run  python tools/serve.py  to create, '
                     + 'upload and save.';
       return;
     }
+    if (!state.figure) { s.textContent = 'No figure loaded.'; return; }
     if (!onDisk()) { s.textContent = 'This figure is not on disk yet.'; return; }
     s.textContent = isDirty() ? 'Unsaved changes.' : 'Saved.';
   }
@@ -298,6 +399,55 @@
       .catch(function (e) { say(String((e && e.message) || e)); });
   }
 
+  /* Deletes the whole figure - its folder, every image in it, and its entry
+   * in figures/index.json - not just the entry in the picker. Leaving the
+   * folder behind would mean the next thing to list figures/ finds it again,
+   * which is the exact bug on the other side of this feature: a figure that
+   * will not go away versus one that is still listed after it already has.
+   */
+  function deleteFigure() {
+    if (!state.figure || !state.name) return;
+    var name = state.name;
+
+    if (!onDisk()) {
+      /* Never touched the server, so there is nothing there to remove.
+       * Forgetting it here is the whole of what "deleting" it means.
+       *
+       * Deliberately not a call to refreshFigureList(): that rebuilds the
+       * picker from the disk listing alone, and an in-page figure is not on
+       * it - two flat images dropped in before either was saved would lose
+       * the other the moment one of them was discarded. */
+      delete state.unsaved[name];
+      var sel = $('figureSel');
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === UNSAVED + name) { sel.remove(i); break; }
+      }
+      var next = Object.keys(state.unsaved)[0];
+      var after = next
+        ? mountFigure(next, state.unsaved[next], '').then(function () {
+            sel.value = UNSAVED + next;
+          })
+        : refreshFigureList();      /* nothing unsaved left - fall back to disk */
+      return after.then(function () {
+        say('Discarded "' + name + '". It was never saved.');
+      });
+    }
+    if (!state.canWrite) { say('The server is read-only.'); return; }
+
+    say('deleting figures/' + name + ' …');
+    return fetch('/_figure?name=' + encodeURIComponent(name), { method: 'DELETE' })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw new Error(j.error || 'delete failed (' + r.status + ')');
+        });
+      })
+      .then(function () { return refreshFigureList(); })
+      .then(function () {
+        say('Deleted figures/' + name + ' and everything in it.');
+      })
+      .catch(function (e) { say(String((e && e.message) || e)); });
+  }
+
   /* The server refuses anything outside a small character set, so fix the
    * name here rather than letting the upload fail halfway through a batch. */
   function cleanName(n) {
@@ -347,22 +497,68 @@
 
   function refreshFigureList(pick) {
     return listFigures().then(function (names) {
-      var sel = $('figureSel');
-      sel.innerHTML = '';
-      for (var i = 0; i < names.length; i++) {
-        var o = document.createElement('option');
-        o.value = names[i];
-        o.textContent = names[i];
-        sel.appendChild(o);
-      }
-      var want = (pick && names.indexOf(pick) >= 0) ? pick : names[0];
-      if (!want) {
-        say('No figures found under ' + FIGURES_ROOT);
-        return null;
-      }
-      sel.value = want;
-      return loadFigure(want);
+      return partitionByExistence(names).then(function (p) {
+        if (p.gone.length) forgetGhosts(p.gone);
+
+        var sel = $('figureSel');
+        sel.innerHTML = '';
+        for (var i = 0; i < p.live.length; i++) {
+          var o = document.createElement('option');
+          o.value = p.live[i];
+          o.textContent = p.live[i];
+          sel.appendChild(o);
+        }
+
+        var want = (pick && p.live.indexOf(pick) >= 0) ? pick : p.live[0];
+        if (!want) {
+          unmountFigure();
+          say(p.gone.length
+            ? 'Nothing left: ' + p.gone.join(', ') + ' no longer exist on ' +
+              'disk. Start from a flat image, or create one.'
+            : 'No figures found under ' + FIGURES_ROOT);
+          return null;
+        }
+
+        sel.value = want;
+        return loadFigure(want).then(function (r) {
+          if (p.gone.length) {
+            say('Removed from the list, missing on disk: ' + p.gone.join(', ') + '.');
+          }
+          return r;
+        });
+      });
     });
+  }
+
+  /* The state after the last figure is gone - a fresh tab that has not
+   * loaded one yet, reached here instead by deleting every figure there
+   * was. Every card already guards against state.figure being null; this is
+   * the one place that actually puts it there and clears what a stale
+   * figure would otherwise leave on screen. */
+  function unmountFigure() {
+    if (state.fig) { state.fig.pause(); state.fig.destroy(); state.fig = null; }
+    state.figure = null;
+    state.name = null;
+    state.selected = null;
+    state.hidden = {};
+    state.images = null;
+    state.saved = '';
+    marks.parts = [];
+    if (marks.on) setMarkMode(false);
+    clearPlace();
+
+    $('sheet').width = 0;
+    $('eventsOut').textContent = '';
+    $('iouTable').innerHTML = '';
+    $('jsonOut').value = '';
+
+    buildLayerList();
+    buildLayerCard();
+    buildMotionControls();
+    buildIouTruthList();
+    refreshAddFrom();
+    drawOverlay();
+    refreshSaveState();
   }
 
   /* ================================================================== *
@@ -431,9 +627,10 @@
   function buildLayerList() {
     var ul = $('layerList');
     ul.innerHTML = '';
-    var layers = state.figure.layers || [];
-    $('layerCount').textContent = layers.length +
-      (layers.length === 1 ? ' layer' : ' layers');
+    var layers = state.figure ? (state.figure.layers || []) : [];
+    $('layerCount').textContent = state.figure
+      ? layers.length + (layers.length === 1 ? ' layer' : ' layers')
+      : '';
     /* Draw order is back to front. Read it top to bottom as front to back,
      * the way a layer palette does. */
     for (var i = layers.length - 1; i >= 0; i--) {
@@ -538,6 +735,12 @@
         ul.appendChild(li);
       })(layers[i], layers.length - 1 - i);
     }
+
+    /* The selected layer's dot is drawn larger and labelled, so every change
+     * of selection is a change to the overlay. This runs on all of them -
+     * the row click, the pivot grab, a layer being removed - which is why
+     * the flag is set here rather than at each of those call sites. */
+    drawOverlay();
   }
 
   function selectedLayer() {
@@ -677,6 +880,39 @@
     p.className = 'hint tight';
     p.textContent = text;
     return p;
+  }
+
+  /* Two clicks rather than a dialog, for anything that deletes something. A
+   * dialog is not used because window.confirm is blocked outright in some
+   * embedded browsers, and a button that says what it is about to do reads
+   * better than one that opens a box asking the same question.
+   *
+   * `confirmText` may be a function, so the second label can name the exact
+   * thing about to go - a fixed HTML button and one created fresh per layer
+   * both call this the same way. */
+  function armDangerButton(btn, calmText, confirmText, action) {
+    var timer = 0;
+    function calm() {
+      timer = 0;
+      btn.classList.add('ghost');
+      btn.textContent = calmText;
+    }
+    /* Only the two classes this owns. 'btn' and layout classes like 'wide'
+     * differ by where the button lives - a topbar button already has its
+     * base class from the markup, a per-layer one is built fresh in JS. */
+    btn.classList.add('danger');
+    calm();
+    btn.addEventListener('click', function () {
+      if (!timer) {
+        btn.classList.remove('ghost');
+        btn.textContent = typeof confirmText === 'function' ? confirmText() : confirmText;
+        timer = window.setTimeout(calm, 4000);
+        return;
+      }
+      window.clearTimeout(timer);
+      calm();
+      action();
+    });
   }
 
   /* A labelled dropdown on the same grid as a slider, so the panel reads as
@@ -844,6 +1080,124 @@
 
     var msg = blinkTrouble(state.figure);
     if (msg) box.appendChild(hintLine(msg));
+
+    if ((state.figure.layers || []).length > 1) {
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn wide';
+      armDangerButton(del, 'Remove this layer',
+        function () { return 'Really remove "' + L.id + '" and its image?'; },
+        function () { removeLayer(L); });
+      box.appendChild(del);
+      box.appendChild(hintLine('This deletes the layer’s image from the '
+        + 'figure folder as well. Leaving the file behind would put the layer '
+        + 'back on the next cut or upload.'));
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Removing a layer
+   *
+   * Taking the entry out of figure.json is not enough. The picture it came
+   * from is still in the folder, and import-layers.py adds a part it does
+   * not recognise as a new layer - so the next cut or upload would put the
+   * layer straight back. Both files go, or neither does.
+   * ------------------------------------------------------------------ */
+
+  function deleteFile(path) {
+    return fetch(path, { method: 'DELETE' }).then(function (r) {
+      /* 404 is a fine outcome here: it means the file was already gone. */
+      if (!r.ok && r.status !== 404) {
+        return r.text().then(function (t) { throw new Error(t); });
+      }
+    });
+  }
+
+  /* What is actually in a figure's folder.
+   *
+   * Deliberately not the directory listing. On this machine the HTML listing
+   * for a folder of twelve files arrives cut off after six, mid-tag, with a
+   * Content-Length that matches the truncated body - under a plain
+   * `python -m http.server` as well, so it is not something serve.py did.
+   * GET /_files answers from os.listdir and is right. */
+  function figureFiles(name) {
+    return fetch('/_files?name=' + encodeURIComponent(name))
+      .then(function (r) { return r.ok ? r.json() : { files: [], layers: [] }; })
+      .catch(function () { return { files: [], layers: [] }; });
+  }
+
+  /* The part name a file name carries, by the same rule import-layers.py
+   * uses: drop a leading number, then the figure's own name. */
+  function partOfFile(fname, figure) {
+    var stem = fname.replace(/\.[^.]+$/, '');
+    while (stem && stem[0] >= '0' && stem[0] <= '9') stem = stem.slice(1);
+    stem = stem.replace(/^[-_. ]+/, '');
+    if (stem.toLowerCase().indexOf(figure.toLowerCase()) === 0) {
+      stem = stem.slice(figure.length).replace(/^[-_. ]+/, '');
+    }
+    return slugLike(stem);
+  }
+
+  /* The numbered file a cut or an upload left in the figure folder, whose
+   * name folds onto this layer's id. */
+  function sourceFileFor(name, id) {
+    return figureFiles(name).then(function (d) {
+      var out = [];
+      for (var i = 0; i < d.files.length; i++) {
+        var f = d.files[i];
+        if (!/\.(png|webp|jpe?g)$/i.test(f)) continue;
+        if (f === 'source.png' || f === 'marks.png') continue;
+        if (partOfFile(f, name) === id) out.push(f);
+      }
+      return out;
+    });
+  }
+
+  function removeLayer(L) {
+    var name = state.name;
+    var layers = state.figure.layers || [];
+    var i = layers.indexOf(L);
+    if (i < 0) return;
+
+    /* Whatever hung off it now hangs off what it hung off. Leaving a child
+     * pointing at a layer that is gone is the one broken state the engine
+     * cannot survive - it walks the chain on every frame. */
+    for (var k = 0; k < layers.length; k++) {
+      if (layers[k].parent === L.id) {
+        if (L.parent) layers[k].parent = L.parent;
+        else delete layers[k].parent;
+      }
+    }
+    layers.splice(i, 1);
+    if (state.selected === L.id) state.selected = null;
+
+    rebuildStage();
+    buildLayerList();
+    buildLayerCard();
+    buildMotionControls();
+
+    if (!state.canWrite || !onDisk()) {
+      say('Removed "' + L.id + '" from the figure. Nothing was deleted from '
+        + 'disk - this server cannot write.');
+      return;
+    }
+
+    say('removing ' + L.id + ' …');
+    sourceFileFor(name, L.id)
+      .then(function (files) {
+        var jobs = [deleteFile(FIGURES_ROOT + name + '/' + L.src)];
+        for (var j = 0; j < files.length; j++) {
+          jobs.push(deleteFile(FIGURES_ROOT + name + '/' + files[j]));
+        }
+        return Promise.all(jobs).then(function () { return files; });
+      })
+      .then(function (files) {
+        return saveFigure().then(function () {
+          say('Removed "' + L.id + '" and ' + (1 + files.length) +
+              ' image file' + (files.length ? 's' : '') + '.');
+        });
+      })
+      .catch(function (e) { say(String((e && e.message) || e)); });
   }
 
   /* Rebuild the stage from the figure object as it stands now.
@@ -1169,7 +1523,7 @@
       if (state.fig.playing) {
         $('scrub').value = String(Math.min(t, state.window));
       }
-      drawOverlay();
+      if (overlayDirty) { overlayDirty = false; paintOverlay(); }
     }
     requestAnimationFrame(tick);
   }
@@ -1260,6 +1614,14 @@
       'translate(-50%, -50%) translate(' +
       view.panX.toFixed(2) + 'px, ' + view.panY.toFixed(2) + 'px) scale(' +
       m.k.toFixed(5) + ')';
+    /* The mask rides the same transform as the stage. That is the whole
+     * reason it can be painted in figure pixels: what is under the brush on
+     * screen is under the brush in the file. */
+    var mc = $('marks');
+    if (mc && !mc.hidden) mc.style.transform = state.fig.stage.style.transform;
+    var pc = $('place');
+    if (pc && !pc.hidden) pc.style.transform = state.fig.stage.style.transform;
+
     var out = $('zoomOut');
     if (out) out.textContent = Math.round(view.zoom * 100) + ' %';
   }
@@ -1308,7 +1670,25 @@
     drawOverlay();
   }
 
-  function drawOverlay() {
+  /* The pivot dots are drawn from the figure, not from the animation: a
+   * swaying head moves, the dot marking its neck does not. So the overlay
+   * only has to be repainted when the figure, the selection or the view
+   * changes - and everything that changes one of those already calls
+   * drawOverlay().
+   *
+   * It used to repaint on every frame regardless. Measured on grim at a
+   * device pixel ratio of 1.75 that was a 1624 x 1482 canvas, 2.4 million
+   * pixels, cleared and redrawn and recomposited sixty times a second to
+   * show twenty-two dots that had not moved. The script cost alone was
+   * 0.40 ms of the 0.54 ms the whole frame took; the compositing cost was
+   * on top of that and is what showed up as a stutter.
+   *
+   * A repaint one frame late is invisible, so the flag is enough. */
+  var overlayDirty = true;
+
+  function drawOverlay() { overlayDirty = true; }
+
+  function paintOverlay() {
     var c = $('overlay');
     var g = c.getContext('2d');
     g.clearRect(0, 0, c.width, c.height);
@@ -1449,6 +1829,29 @@
       /* The middle button always pans, for the times you want to push the
        * figure while the pointer happens to be over a joint. */
       if (e.button === 1) { startPan(e); return; }
+
+      /* A part being placed owns the left button until it is placed or
+       * cancelled. It is the only thing on screen that is not yet real. */
+      if (place.img && e.button === 0) {
+        var sp0 = overlayToStage(pos(e)[0], pos(e)[1]);
+        state.placing = [sp0[0] - place.x, sp0[1] - place.y];
+        e.preventDefault();
+        return;
+      }
+
+      /* While marking, the left button belongs to the brush and the right
+       * one erases. Panning is still on the middle button and the wheel, so
+       * nothing has to be given up to paint. */
+      if (marks.on && (e.button === 0 || e.button === 2)) {
+        marks.erasing = (e.button === 2) || e.altKey;
+        marks.last = null;
+        var s = overlayToStage(pos(e)[0], pos(e)[1]);
+        paintTo(s[0], s[1], marks.erasing);
+        state.painting = true;
+        e.preventDefault();
+        return;
+      }
+
       if (e.button !== 0) return;
 
       var p = pos(e);
@@ -1509,6 +1912,18 @@
     }, { passive: false });
 
     window.addEventListener('mousemove', function (e) {
+      if (state.placing) {
+        var sp1 = overlayToStage(pos(e)[0], pos(e)[1]);
+        place.x = sp1[0] - state.placing[0];
+        place.y = sp1[1] - state.placing[1];
+        drawPlace();
+        return;
+      }
+      if (state.painting) {
+        var sp = overlayToStage(pos(e)[0], pos(e)[1]);
+        paintTo(sp[0], sp[1], marks.erasing);
+        return;
+      }
       if (state.panning) {
         view.panX = state.panning.px + (e.clientX - state.panning.x);
         view.panY = state.panning.py + (e.clientY - state.panning.y);
@@ -1541,6 +1956,15 @@
     });
 
     window.addEventListener('mouseup', function () {
+      state.placing = null;
+      if (state.painting) {
+        state.painting = false;
+        marks.last = null;
+        /* Once per stroke, not once per frame: the count reads the whole
+         * mask, which is 1.8 million pixels on pedro. */
+        countParts();
+        buildPartList();
+      }
       state.dragging = false;
       state.nudging = null;
       if (state.panning) {
@@ -1695,6 +2119,7 @@
 
   function renderEvents() {
     var box = $('eventsOut');
+    if (!state.figure) { box.textContent = 'No figure loaded.'; return; }
     var r = scanEvents(30, 60);
     if (!r.watched.length) {
       box.textContent = 'No blink and no burst in this figure.';
@@ -1940,7 +2365,7 @@
   function buildIouTruthList() {
     var sel = $('iouTruth');
     sel.innerHTML = '';
-    var layers = state.figure.layers || [];
+    var layers = state.figure ? (state.figure.layers || []) : [];
     var seen = {};
     for (var i = 0; i < layers.length; i++) {
       var srcs = (layers[i].frames && layers[i].frames.length)
@@ -2222,6 +2647,738 @@
   }
 
   /* ================================================================== *
+   * Marking: say which pixels are which part
+   *
+   * The machine cut does not work, and docs/cutting.md says why. What a
+   * model cannot know is which pixels are *meant* to be one part - that a
+   * collar belongs to the chest and a strap does not. A person says that in
+   * five seconds with a brush, and it is the only thing they have to say:
+   * the boundary comes out of the picture, and the rig comes out of the name
+   * through the table import-layers.py has carried all along.
+   * ================================================================== */
+
+  /* Far apart on purpose. Where two strokes meet, the canvas leaves a blend
+   * of the two colours, and the cutter resolves those to the nearest
+   * declared colour - which is only right if no blend of two entries lands
+   * closer to a third. */
+  var PALETTE = [
+    [230, 25, 75], [60, 180, 75], [255, 225, 25], [0, 130, 200],
+    [245, 130, 48], [145, 30, 180], [70, 240, 240], [240, 50, 230],
+    [210, 245, 60], [250, 190, 212], [0, 128, 128], [170, 110, 40],
+    [128, 0, 0], [170, 255, 195], [128, 128, 0], [0, 0, 128]
+  ];
+
+  var marks = {
+    on: false,
+    ctx: null,
+    parts: [],        /* front first, like the layer list */
+    active: 0,
+    brush: 40,
+    grow: 24,         /* how far a mark may spread past what was painted */
+    last: null,       /* previous point of the current stroke, in figure px */
+    erasing: false,
+    sourceFile: null  /* the flat image, when it came in through the studio */
+  };
+
+  function rgbCss(c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+
+  /* The same rule slug() uses in cut-by-marks.py and import-layers.py. It is
+   * here so the studio can tell in advance which layer ids a cut will
+   * produce, and therefore whether the rig on file still describes them. */
+  function slugLike(name) {
+    var s = String(name || '').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    while (s.indexOf('--') >= 0) s = s.replace(/--/g, '-');
+    return s.replace(/^-+|-+$/g, '').slice(0, 28);
+  }
+
+  function markSay(msg) { $('markOut').textContent = msg || ''; }
+
+  /* The mask lives at the figure's own resolution and wears the same
+   * transform as the stage, so painting is done in figure pixels and the
+   * canvas is marks.png with no resampling anywhere. */
+  function sizeMarks() {
+    var c = $('marks');
+    var f = state.figure;
+    var w = (f && f.size && f.size.width) || 1000;
+    var h = (f && f.size && f.size.height) || 1000;
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+      marks.ctx = c.getContext('2d', { willReadFrequently: true });
+    }
+    c.style.width = w + 'px';
+    c.style.height = h + 'px';
+    if (!marks.ctx) marks.ctx = c.getContext('2d', { willReadFrequently: true });
+  }
+
+  function nextColour() {
+    var used = {};
+    for (var i = 0; i < marks.parts.length; i++) used[marks.parts[i].colour.join()] = 1;
+    for (i = 0; i < PALETTE.length; i++) {
+      if (!used[PALETTE[i].join()]) return PALETTE[i];
+    }
+    return PALETTE[marks.parts.length % PALETTE.length];
+  }
+
+  function addPart(name) {
+    marks.parts.push({ colour: nextColour(), name: name || '', px: 0 });
+    marks.active = marks.parts.length - 1;
+    buildPartList();
+  }
+
+  function removePart(i) {
+    var p = marks.parts[i];
+    if (!p) return;
+    /* Take its paint with it, or the cutter would meet a colour nobody
+     * declared and hand those pixels to whichever part is nearest in RGB. */
+    eraseColour(p.colour);
+    marks.parts.splice(i, 1);
+    if (marks.active >= marks.parts.length) marks.active = marks.parts.length - 1;
+    countParts();
+    buildPartList();
+  }
+
+  function eraseColour(colour) {
+    if (!marks.ctx) return;
+    var c = $('marks');
+    var img = marks.ctx.getImageData(0, 0, c.width, c.height);
+    var d = img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 129) continue;
+      if (nearestPart(d[i], d[i + 1], d[i + 2]) === colourIndex(colour)) {
+        d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
+      }
+    }
+    marks.ctx.putImageData(img, 0, 0);
+  }
+
+  function colourIndex(colour) {
+    for (var i = 0; i < marks.parts.length; i++) {
+      if (marks.parts[i].colour.join() === colour.join()) return i;
+    }
+    return -1;
+  }
+
+  /* Which declared part a painted pixel belongs to. Nearest colour, not an
+   * exact match: a brush stroke is antialiased, so its rim is a blend and an
+   * exact test would throw every rim pixel away. */
+  function nearestPart(r, g, b) {
+    var best = -1, bestD = 1 << 30;
+    for (var i = 0; i < marks.parts.length; i++) {
+      var c = marks.parts[i].colour;
+      var d = Math.abs(c[0] - r) + Math.abs(c[1] - g) + Math.abs(c[2] - b);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function countParts() {
+    var c = $('marks');
+    if (!marks.ctx || !c.width) return;
+    for (var i = 0; i < marks.parts.length; i++) marks.parts[i].px = 0;
+    var d = marks.ctx.getImageData(0, 0, c.width, c.height).data;
+    for (var k = 0; k < d.length; k += 4) {
+      if (d[k + 3] < 129) continue;
+      var p = nearestPart(d[k], d[k + 1], d[k + 2]);
+      if (p >= 0) marks.parts[p].px++;
+    }
+  }
+
+  function paintTo(x, y, erase) {
+    var g = marks.ctx;
+    if (!g || !marks.parts.length) return;
+    g.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+    g.strokeStyle = g.fillStyle = rgbCss(marks.parts[marks.active].colour);
+    g.lineWidth = marks.brush;
+    g.lineCap = g.lineJoin = 'round';
+    if (marks.last) {
+      g.beginPath();
+      g.moveTo(marks.last[0], marks.last[1]);
+      g.lineTo(x, y);
+      g.stroke();
+    } else {
+      g.beginPath();
+      g.arc(x, y, marks.brush / 2, 0, Math.PI * 2);
+      g.fill();
+    }
+    marks.last = [x, y];
+  }
+
+  /* Which row is the brush loaded with. Deliberately not a rebuild: the row
+   * holds a text field somebody may be typing in, and rebuilding it under a
+   * focused field takes the focus with it. Putting the focus back afterwards
+   * fires focus again, which rebuilt again - a loop that ended in "Maximum
+   * call stack size exceeded" the moment a name field was clicked. */
+  function markActive(idx) {
+    marks.active = idx;
+    var ul = $('partList');
+    for (var i = 0; i < ul.children.length; i++) {
+      ul.children[i].className = (i === idx ? 'on' : '');
+    }
+  }
+
+  function buildPartList() {
+    var ul = $('partList');
+    ul.innerHTML = '';
+    for (var i = 0; i < marks.parts.length; i++) {
+      (function (p, idx) {
+        var li = document.createElement('li');
+        li.className = (idx === marks.active ? 'on' : '');
+
+        var sw = document.createElement('span');
+        sw.className = 'chip';
+        sw.style.background = rgbCss(p.colour);
+
+        var nm = document.createElement('input');
+        nm.className = 'txt';
+        nm.type = 'text';
+        nm.spellcheck = false;
+        nm.value = p.name;
+        nm.placeholder = 'kopf, arm, hand …';
+        nm.setAttribute('list', 'partWords');
+        nm.addEventListener('input', function () { p.name = nm.value.trim(); });
+        nm.addEventListener('focus', function () { markActive(idx); });
+
+        var px = document.createElement('span');
+        px.className = 'pv';
+        px.textContent = p.px ? (p.px > 9999 ? Math.round(p.px / 1000) + 'k' : p.px) : '–';
+
+        var kill = document.createElement('button');
+        kill.type = 'button';
+        kill.className = 'x';
+        kill.textContent = '×';
+        kill.title = 'remove this part and its paint';
+        kill.addEventListener('click', function (e) {
+          e.stopPropagation();
+          removePart(idx);
+        });
+
+        li.appendChild(sw);
+        li.appendChild(nm);
+        li.appendChild(px);
+        li.appendChild(kill);
+        li.addEventListener('click', function () { markActive(idx); });
+        ul.appendChild(li);
+      })(marks.parts[i], i);
+    }
+  }
+
+  /* Marks that were painted before and are still on disk. Without this the
+   * brush started from an empty canvas every time, so an afternoon of
+   * marking survived exactly as long as the tab did - and a cut that failed
+   * for any reason took the work with it. */
+  function loadMarks() {
+    var base = FIGURES_ROOT + state.name + '/';
+    return fetch(base + 'marks.json')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (plan) {
+        if (!plan || !plan.parts || !plan.parts.length) return false;
+        return new Promise(function (res) {
+          var img = new Image();
+          img.onload = function () {
+            var c = $('marks');
+            /* A mask drawn on a different canvas is not this figure's mask,
+             * whatever the folder says. */
+            if (img.naturalWidth !== c.width || img.naturalHeight !== c.height) {
+              markSay('marks.png is ' + img.naturalWidth + '×' + img.naturalHeight +
+                      ', this figure is ' + c.width + '×' + c.height +
+                      '. Left it alone.');
+              return res(false);
+            }
+            marks.ctx.clearRect(0, 0, c.width, c.height);
+            marks.ctx.globalCompositeOperation = 'source-over';
+            marks.ctx.drawImage(img, 0, 0);
+            marks.parts = plan.parts.map(function (p) {
+              return { colour: p.colour, name: p.name || '', px: 0 };
+            });
+            marks.active = 0;
+            countParts();
+            buildPartList();
+            markSay('Picked up the marks that were already there.');
+            res(true);
+          };
+          img.onerror = function () { res(false); };
+          img.src = base + 'marks.png?' + Date.now();
+        });
+      })
+      .catch(function () { return false; });
+  }
+
+  function setMarkMode(on) {
+    marks.on = !!on;
+    $('marks').hidden = !marks.on;
+    $('markPanel').hidden = !marks.on;
+    $('layerList').hidden = marks.on;
+    $('layerNote').hidden = marks.on;
+    $('brushWrap').hidden = !marks.on;
+    $('markBtn').setAttribute('aria-pressed', String(marks.on));
+    $('markBtn').className = 'btn' + (marks.on ? ' primary' : '');
+    $('overlay').classList.toggle('painting', marks.on);
+    if (marks.on) {
+      sizeMarks();
+      applyView();
+      markSay('');
+      buildPartList();
+      loadMarks().then(function (found) {
+        if (!found && !marks.parts.length) { addPart(''); buildPartList(); }
+      });
+    }
+  }
+
+  /* Everything the cutter is promised: flat colours, full alpha, nothing
+   * else. The rim of every stroke is a blend, and writing those out as they
+   * are would leave marks.png full of colours no part declares. */
+  function flatMarksBlob() {
+    var c = $('marks');
+    var img = marks.ctx.getImageData(0, 0, c.width, c.height);
+    var d = img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 129) { d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0; continue; }
+      var p = nearestPart(d[i], d[i + 1], d[i + 2]);
+      var c3 = marks.parts[p].colour;
+      d[i] = c3[0]; d[i + 1] = c3[1]; d[i + 2] = c3[2]; d[i + 3] = 255;
+    }
+    var out = document.createElement('canvas');
+    out.width = c.width; out.height = c.height;
+    out.getContext('2d').putImageData(img, 0, 0);
+    return new Promise(function (res, rej) {
+      out.toBlob(function (b) { b ? res(b) : rej(new Error('marks.png leer')); },
+                 'image/png');
+    });
+  }
+
+  /* A figure that came in through "Flat image" lives only in this page.
+   * onDisk() cannot see that - it only checks that the figure has a name,
+   * and an unsaved one does - so the cut used to march straight on and fail
+   * three requests later against a folder that was never made.
+   *
+   * Cutting is the first thing that needs a real folder, so this is where
+   * one appears. No layers on purpose: the importer reads an empty list as
+   * "no rig to keep" and builds one from the parts, which is exactly right
+   * for a first cut. */
+  function ensureFigureOnDisk() {
+    var name = state.name;
+    /* state.unsaved holds exactly the figures that live only in this page,
+     * so this is an answer rather than a question. Asking the server meant a
+     * HEAD that comes back 404 in the normal case, which is a red line in
+     * the console for something that is working. */
+    return Promise.resolve()
+      .then(function () {
+        if (!state.unsaved[name]) return;
+        var f = state.figure;
+        var fig = {
+          name: name,
+          note: 'Started from a flat picture, cut in the studio.',
+          size: f.size || { width: 1000, height: 1000 },
+          motion: f.motion || { windowSeconds: 8, followSeconds: 0.085, parallax: 0.25 },
+          layers: []
+        };
+        markSay('creating figures/' + name + ' …');
+        return putFile(FIGURES_ROOT + name + '/figure.json',
+                       JSON.stringify(fig, null, 2) + '\n', 'application/json')
+          .then(function () { return registerFigure(name); })
+          .then(function () { delete state.unsaved[name]; });
+      });
+  }
+
+  /* The flat picture has to be on disk before the cutter can read it. It is
+   * already there when flatten.py wrote it or a previous cut ran; it is in
+   * the page when the figure came in through "Flat image". */
+  function ensureSource() {
+    var path = FIGURES_ROOT + state.name + '/source.png';
+    /* When the page is holding the picture, write it: it is the one being
+     * marked, so an older source.png next to it is the wrong one. Only a
+     * figure that came off disk has to be asked. */
+    if (marks.sourceFile) return putFile(path, marks.sourceFile, 'image/png');
+    return fetch(path, { method: 'HEAD' }).then(function (r) {
+      if (!r.ok) {
+        throw new Error('figures/' + state.name + '/source.png is missing. ' +
+                        'Start from a flat image, or run  python ' +
+                        'tools/flatten.py ' + state.name);
+      }
+    });
+  }
+
+  function runCut() {
+    if (!state.canWrite) { markSay('The server is read-only.'); return; }
+    if (!state.figure || !state.name) {
+      markSay('Load a figure first.');
+      return;
+    }
+    if (!NAME_OK.test(state.name)) {
+      markSay('"' + state.name + '" cannot be a folder here. A name may hold '
+            + 'a-z, 0-9, dot, dash and underscore, and has to start with a '
+            + 'letter or a digit.');
+      return;
+    }
+    var named = 0, i;
+    for (i = 0; i < marks.parts.length; i++) if (marks.parts[i].name) named++;
+    if (named !== marks.parts.length) {
+      markSay('Every part needs a name - that is what decides its rig.');
+      return;
+    }
+    countParts();
+    for (i = 0; i < marks.parts.length; i++) {
+      if (!marks.parts[i].px) {
+        markSay('"' + marks.parts[i].name + '" has no paint on it yet.');
+        return;
+      }
+    }
+
+    var name = state.name;
+    var count = marks.parts.length;
+    var plan = { parts: marks.parts.map(function (p) {
+      return { colour: p.colour, name: p.name };
+    }) };
+
+    /* The importer keeps an existing rig on purpose - the pivots and the
+     * chain are the part a person corrected by hand, and they cannot be
+     * recovered from the pixels. That is right when the same parts come back
+     * repainted, and wrong the first time, when the rig on file describes
+     * one layer called "whole" and the cut just produced eight.
+     *
+     * So: keep it when the cut produces exactly the layers that are already
+     * there, rewrite it when it does not. Comparing the names is the whole
+     * test, because the name is what the rig was built from. */
+    var have = (state.figure.layers || []).map(function (L) { return L.id; }).sort();
+    var want = plan.parts.map(function (p) { return slugLike(p.name); }).sort();
+    var same = have.length === want.length && have.every(function (v, i) {
+      return v === want[i];
+    });
+    var rewrite = same ? '' : '&rewrite=1';
+
+    markSay('cutting …');
+    ensureFigureOnDisk()
+      .then(ensureSource)
+      .then(flatMarksBlob)
+      .then(function (blob) {
+        return putFile(FIGURES_ROOT + name + '/marks.png', blob, 'image/png');
+      })
+      .then(function () {
+        return putFile(FIGURES_ROOT + name + '/marks.json',
+                       JSON.stringify(plan, null, 2) + '\n', 'application/json');
+      })
+      .then(function () {
+        /* reach is the setting that decides what a cut even is: small, and
+         * the parts follow the brush; large, and the marks divide the whole
+         * figure between them with the seams halfway between the blobs. */
+        var q = '/_cut?name=' + encodeURIComponent(name) +
+                '&grow=' + encodeURIComponent(marks.grow) +
+                '&rest=' + ($('keepRest').checked ? 'rest' : '');
+        return fetch(q, { method: 'POST' }).then(function (r) { return r.json(); });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.err || res.error || 'cut failed');
+        markSay(res.out || 'cut.');
+        /* Same call the parts upload makes. From here the rig comes out of
+         * import-layers.py exactly as it does for parts that arrived any
+         * other way. */
+        return fetch('/_import?name=' + encodeURIComponent(name) + rewrite,
+                     { method: 'POST' })
+          .then(function (r) { return r.json(); });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.err || res.error || 'import failed');
+        /* The figure may have only just appeared on disk, so the picker has
+         * to learn about it before it is mounted from there. */
+        return refreshFigureList(name).then(function () { return loadFigure(name); });
+      })
+      .then(function () {
+        setMarkMode(false);
+        say('Cut into ' + count + ' parts and ' +
+            (rewrite ? 'rigged' : 'refreshed') +
+            '. Correct the pivots and the chain in the panel.');
+      })
+      .catch(function (e) { markSay(String((e && e.message) || e)); });
+  }
+
+  /* The words that actually produce a rig, straight from the importer that
+   * owns them. The built-in list is a fallback for a read-only server; the
+   * agreement test holds it to the real table. */
+  var VOCAB_FALLBACK = [
+    'eye', 'lens', 'head', 'hair', 'face', 'hat', 'hand', 'finger', 'rifle',
+    'gun', 'arm', 'sleeve', 'shoulder', 'chest', 'collar', 'torso', 'coat',
+    'cloak', 'cape', 'scarf', 'strap', 'belly', 'leg', 'waist', 'lower'
+  ];
+
+  function loadVocab() {
+    return fetch('/_vocab')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(0); })
+      .then(function (v) {
+        var words = [];
+        for (var i = 0; i < v.kinds.length; i++) {
+          words = words.concat(v.kinds[i].english, v.kinds[i].german);
+        }
+        return words;
+      })
+      .catch(function () { return VOCAB_FALLBACK; })
+      .then(function (words) {
+        var dl = $('partWords');
+        dl.innerHTML = '';
+        for (var i = 0; i < words.length; i++) {
+          var o = document.createElement('option');
+          o.value = words[i];
+          dl.appendChild(o);
+        }
+      });
+  }
+
+  function bindMarking() {
+    $('markBtn').addEventListener('click', function () { setMarkMode(!marks.on); });
+    $('addPartBtn').addEventListener('click', function () { addPart(''); });
+    $('cutBtn').addEventListener('click', runCut);
+    $('brushSize').addEventListener('input', function () {
+      marks.brush = parseFloat(this.value);
+    });
+    $('growPx').addEventListener('input', function () {
+      marks.grow = parseFloat(this.value);
+      $('growOut').textContent = marks.grow + ' px';
+    });
+    /* The right button erases, so its menu has to stay shut over the stage. */
+    $('overlay').addEventListener('contextmenu', function (e) {
+      if (marks.on) e.preventDefault();
+    });
+    loadVocab();
+  }
+
+  /* ================================================================== *
+   * Bringing a part in from another picture
+   *
+   * One picture rarely gives every part at its best. Cut the first for the
+   * parts it does well, cut a second for the rest, and put them on one
+   * figure. The two pictures are almost never the same size, and the engine
+   * has no per-layer scale - every layer is a full-canvas image, and that is
+   * what makes the file readable.
+   *
+   * So the scaling happens here and is baked into the pixels. What ships is
+   * an ordinary layer, and idle.js learns nothing new.
+   * ================================================================== */
+
+  var place = { img: null, x: 0, y: 0, scale: 1, name: '', from: '' };
+
+  function drawPlace() {
+    var c = $('place');
+    if (!place.img) { c.hidden = true; return; }
+    var f = state.figure;
+    var w = (f.size && f.size.width) || 1000;
+    var h = (f.size && f.size.height) || 1000;
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    c.style.width = w + 'px';
+    c.style.height = h + 'px';
+    c.hidden = false;
+    var g = c.getContext('2d');
+    g.clearRect(0, 0, w, h);
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(place.img, place.x, place.y,
+                place.img.naturalWidth * place.scale,
+                place.img.naturalHeight * place.scale);
+    applyView();
+  }
+
+  function clearPlace() {
+    place.img = null;
+    $('place').hidden = true;
+    $('placeCtl').hidden = true;
+  }
+
+  function addSay(m) { $('addOut').textContent = m || ''; }
+
+  function refreshAddFrom() {
+    var sel = $('addFrom');
+    var keep = sel.value;
+    sel.innerHTML = '';
+    var names = [];
+    var opts = $('figureSel').options;
+    for (var i = 0; i < opts.length; i++) {
+      var v = opts[i].value;
+      if (v.indexOf(UNSAVED) === 0 || v === state.name) continue;
+      names.push(v);
+    }
+    for (i = 0; i < names.length; i++) {
+      var o = document.createElement('option');
+      o.value = o.textContent = names[i];
+      sel.appendChild(o);
+    }
+    if (keep && names.indexOf(keep) >= 0) sel.value = keep;
+    return loadAddLayers();
+  }
+
+  function loadAddLayers() {
+    var from = $('addFrom').value;
+    var sel = $('addLayer');
+    sel.innerHTML = '';
+    if (!from) return Promise.resolve();
+    return fetch(FIGURES_ROOT + from + '/figure.json')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (fig) {
+        if (!fig) return;
+        var ls = fig.layers || [];
+        /* Only layers that are one picture. A flip-book is a list of images
+         * and there is nothing sensible to place. */
+        for (var i = ls.length - 1; i >= 0; i--) {
+          if (!ls[i].src) continue;
+          var o = document.createElement('option');
+          o.value = ls[i].id;
+          o.textContent = ls[i].id;
+          sel.appendChild(o);
+        }
+      })
+      .catch(function () {});
+  }
+
+  /* Everything after the image is loaded is the same whether it came from
+   * another figure or off the disk, so both routes end here. */
+  function startPlacing(img, name) {
+    var f = state.figure;
+    var w = (f.size && f.size.width) || 1000;
+    var h = (f.size && f.size.height) || 1000;
+    place.img = img;
+    /* Fit it to this canvas to begin with. A part cut from a 2048 px picture
+     * dropped onto a 1000 px figure at one to one is off the edge and looks
+     * like nothing happened. */
+    place.scale = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+    place.x = (w - img.naturalWidth * place.scale) / 2;
+    place.y = (h - img.naturalHeight * place.scale) / 2;
+    place.base = place.scale;
+    place.name = name;
+    $('placeName').value = name;
+    $('placeScale').value = '100';
+    $('placeScaleVal').textContent = '100';
+    $('placeCtl').hidden = false;
+    addSay('Drag it on the stage, then press Place.');
+    drawPlace();
+  }
+
+  function bringInFile(file) {
+    if (!state.figure) { addSay('Load a figure first.'); return; }
+    var url = URL.createObjectURL(file);
+    loadImg(url)
+      .then(function (img) {
+        startPlacing(img, figureName(file.name.replace(/\.[^.]+$/, '')) || 'teil');
+      })
+      .catch(function (e) { addSay(String((e && e.message) || e)); });
+  }
+
+  function bringIn() {
+    var from = $('addFrom').value, id = $('addLayer').value;
+    if (!from || !id) { addSay('Pick a figure and a layer.'); return; }
+    if (!state.figure) { addSay('Load a figure first.'); return; }
+
+    addSay('loading …');
+    fetch(FIGURES_ROOT + from + '/figure.json')
+      .then(function (r) { return r.json(); })
+      .then(function (fig) {
+        var L = (fig.layers || []).filter(function (x) { return x.id === id; })[0];
+        if (!L || !L.src) throw new Error('layer ' + id + ' has no image');
+        return loadImg(FIGURES_ROOT + from + '/' + L.src);
+      })
+      .then(function (img) {
+        place.from = from;
+        startPlacing(img, id);
+      })
+      .catch(function (e) { addSay(String((e && e.message) || e)); });
+  }
+
+  /* The next free number in the figure folder, so a placed part lands behind
+   * everything that is already there rather than on top of a file that
+   * exists. The studio moves it to the front afterwards - the draw order is
+   * a decision, the file name is only a sort key. */
+  function nextPartNumber(name) {
+    return figureFiles(name).then(function (d) {
+      var max = 0;
+      for (var i = 0; i < d.files.length; i++) {
+        var m = /^(\d\d)-/.exec(d.files[i]);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+      return Math.min(max + 1, 99);
+    });
+  }
+
+  function doPlace() {
+    if (!place.img) return;
+    var nm = ($('placeName').value || '').trim();
+    if (!nm) { addSay('The part needs a name - that is its rig.'); return; }
+    if (!state.canWrite || !state.name) { addSay('No writable figure.'); return; }
+
+    var name = state.name;
+    var slug = slugLike(nm);
+    addSay('placing …');
+
+    nextPartNumber(name)
+      .then(function (n) {
+        var file = (n < 10 ? '0' + n : String(n)) + '-' + slug + '.png';
+        /* The canvas already holds the part at exactly the size and place it
+         * was given, on this figure's canvas. Baking is therefore not a
+         * separate step - it is what has been on screen the whole time. */
+        return canvasToU8($('place'), 'image/png').then(function (u8) {
+          return putFile(FIGURES_ROOT + name + '/' + file,
+                         new Blob([u8], { type: 'image/png' }), 'image/png');
+        });
+      })
+      .then(function () {
+        return fetch('/_import?name=' + encodeURIComponent(name), { method: 'POST' })
+          .then(function (r) { return r.json(); });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.err || res.error || 'import failed');
+        return loadFigure(name);
+      })
+      .then(function () {
+        /* It arrived at the back, because that is where its file name put
+         * it. A part somebody just placed wants to be visible. */
+        var layers = state.figure.layers || [];
+        for (var i = 0; i < layers.length; i++) {
+          if (layers[i].id === slug && i !== layers.length - 1) {
+            layers.push(layers.splice(i, 1)[0]);
+            break;
+          }
+        }
+        state.selected = slug;
+        restack();
+        buildLayerList();
+        buildLayerCard();
+        buildMotionControls();
+        clearPlace();
+        return saveFigure();
+      })
+      .then(function () {
+        addSay('Placed as "' + slug + '". Give it a parent in the Layer card.');
+      })
+      .catch(function (e) { addSay(String((e && e.message) || e)); });
+  }
+
+  function bindPlacing() {
+    $('addFrom').addEventListener('change', loadAddLayers);
+    $('addFetch').addEventListener('click', bringIn);
+    $('addFile').addEventListener('change', function () {
+      if (this.files && this.files.length) bringInFile(this.files[0]);
+      this.value = '';
+    });
+    $('placeCancel').addEventListener('click', function () {
+      clearPlace();
+      addSay('');
+    });
+    $('placeDo').addEventListener('click', doPlace);
+    $('placeScale').addEventListener('input', function () {
+      var pct = parseFloat(this.value);
+      $('placeScaleVal').textContent = String(Math.round(pct));
+      if (!place.img) return;
+      var f = state.figure;
+      var w = (f.size && f.size.width) || 1000;
+      var h = (f.size && f.size.height) || 1000;
+      /* Scale about the middle of what is on screen, so the part does not
+       * walk off the canvas as it grows. */
+      var cx = place.x + place.img.naturalWidth * place.scale / 2;
+      var cy = place.y + place.img.naturalHeight * place.scale / 2;
+      place.scale = place.base * pct / 100;
+      place.x = cx - place.img.naturalWidth * place.scale / 2;
+      place.y = cy - place.img.naturalHeight * place.scale / 2;
+      drawPlace();
+    });
+  }
+
+  /* ================================================================== *
    * The shell: two rails that fold, resize and trade sides
    *
    * Kept in localStorage, not in the figure. Which side someone wants their
@@ -2368,6 +3525,8 @@
 
   function boot() {
     bindShell();
+    bindMarking();
+    bindPlacing();
     bindPivotDrag();
     bindNudgeKeys();
 
@@ -2574,6 +3733,9 @@
       saveFigure().catch(function (e) { say(String((e && e.message) || e)); });
     });
     $('resetBtn').addEventListener('click', resetFigure);
+    armDangerButton($('deleteFigureBtn'), 'Delete figure',
+      function () { return 'Really delete "' + state.name + '" and everything in it?'; },
+      deleteFigure);
     $('partsInput').addEventListener('change', function () {
       if (this.files && this.files.length) uploadParts(this.files);
       this.value = '';

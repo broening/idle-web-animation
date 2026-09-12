@@ -40,6 +40,8 @@
 
     <button id="saveBtn" class="btn primary" type="button">Save</button>
     <button id="resetBtn" class="btn ghost" type="button">Reset</button>
+    <button id="deleteFigureBtn" class="btn" type="button"
+            title="removes the folder and everything in it">Delete figure</button>
 
     <span id="serverState" class="state">checking the server&hellip;</span>
 
@@ -66,7 +68,59 @@
 
       <ul id="layerList" class="layers"></ul>
 
-      <details class="note">
+      <!-- Same rail, other job. While Mark is on this is the list that
+           matters, so the layers step aside rather than sharing the room. -->
+      <div id="markPanel" hidden>
+        <ul id="partList" class="layers parts"></ul>
+        <datalist id="partWords"></datalist>
+
+        <div class="row markrow">
+          <label class="lbl">reach
+            <input id="growPx" type="range" min="0" max="300" step="2" value="24">
+          </label>
+          <output id="growOut" class="zoomval">24 px</output>
+        </div>
+        <label class="chk markrow">
+          <input id="keepRest" type="checkbox" checked>
+          keep what no mark reached
+        </label>
+
+        <div class="row markrow">
+          <button id="addPartBtn" class="btn" type="button">Add part</button>
+          <button id="cutBtn" class="btn primary" type="button">Cut</button>
+        </div>
+        <p id="markOut" class="out"></p>
+
+        <details class="note" open>
+          <summary>how marking works</summary>
+          <p class="hint">One rough blob per part, each in its own colour.
+          Paint <b>inside</b> the part &mdash; the boundary is worked out from
+          the picture, not from your blob.</p>
+          <p class="hint">The finer the part, the closer to its edge you have
+          to paint. A thin sabre marked with a dot loses half of itself to the
+          jaw beside it; marked along its length it does not.</p>
+          <p class="hint"><kbd>Alt</kbd> or the right button erases.</p>
+          <p class="hint"><b>reach</b> is how far a mark may spread beyond
+          what you painted, and it is the setting that decides everything. At
+          24 px the cut follows your brush. Wind it up and the marks divide
+          the whole figure between them, which puts the seams halfway between
+          your blobs rather than on the drawing.</p>
+          <p class="hint">Whatever no mark reached becomes one layer at the
+          back. Switch that off to keep only the parts you marked &mdash; for
+          taking two limbs out of this picture and the rest out of another.</p>
+          <p class="hint">Names decide the rig. <code>kopf</code> or
+          <code>head</code> gives a neck pivot and a gaze,
+          <code>arm</code> a shoulder and a sway. The field offers every word
+          that works.</p>
+          <p class="hint">Cutting a flat picture can only recover what is
+          <b>visible</b>. What lies behind a part is not in the file, so a
+          part that moves far shows a hole. Measured on the priest: a pupil
+          with 6 visible pixels cannot be cut out at all &mdash; eyes want
+          their own drawn images.</p>
+        </details>
+      </div>
+
+      <details id="layerNote" class="note">
         <summary>how the list works</summary>
         <p class="hint">The list runs <b>front to back</b>, the way a layer
         palette does. Drag a row by its grip to change draw order.</p>
@@ -97,6 +151,14 @@
     <main class="stage-col">
       <div class="stage-wrap">
         <div id="stage" class="stage"></div>
+        <!-- The mask, at the figure's own resolution and carrying the same
+             transform as the stage, so a brush stroke lands on the pixel it
+             looks like it lands on and the canvas IS marks.png. -->
+        <canvas id="marks" class="marks" hidden></canvas>
+        <!-- A part on its way in from another figure, drawn on this figure's
+             canvas at the size and place it is being given. What is on this
+             canvas when Place is pressed is exactly what gets written. -->
+        <canvas id="place" class="marks place" hidden></canvas>
         <canvas id="overlay" class="overlay"></canvas>
       </div>
 
@@ -107,6 +169,12 @@
         <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
         <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
         <label class="chk"><input id="showSeams" type="checkbox"> layer edges</label>
+
+        <button id="markBtn" class="btn" type="button" aria-pressed="false"
+                title="paint over the picture to say which part is which">Mark</button>
+        <label id="brushWrap" class="chk" hidden>brush
+          <input id="brushSize" type="range" min="4" max="160" step="2" value="40">
+        </label>
 
         <span class="zoomctl">
           <button id="zoomFit" class="btn ghost" type="button"
@@ -150,6 +218,57 @@
           <p class="hint">Each type once per layer. Two blinks read the same
           clock and fire as one; two drifts make the layer jump between
           rises.</p>
+        </details>
+      </details>
+
+      <details class="card">
+        <summary>Add part</summary>
+        <p class="hint">Take a layer out of another figure and put it on this
+        one. Any canvas size: it is scaled and baked into this figure's
+        canvas, so what ships is an ordinary full-canvas layer and the player
+        needs to know nothing about it.</p>
+        <div class="row">
+          <select id="addFrom" class="sel small"></select>
+          <select id="addLayer" class="sel small"></select>
+          <button id="addFetch" class="btn" type="button">Bring it in</button>
+        </div>
+        <div class="row">
+          <label class="btn ghost file" id="addFileBtn"
+                 title="any image, any size - it is scaled and baked in">
+            &hellip;or an image file
+            <input id="addFile" type="file" accept="image/*" hidden>
+          </label>
+        </div>
+
+        <div id="placeCtl" hidden>
+          <label class="field"><span>name</span>
+            <input id="placeName" class="txt" type="text" spellcheck="false"
+                   list="partWords">
+          </label>
+          <label class="slider"><span>size</span>
+            <input id="placeScale" type="range" min="5" max="300" step="1" value="100">
+            <span id="placeScaleVal" class="val">100</span>
+          </label>
+          <p class="hint">Drag it on the stage to move it.</p>
+          <div class="row">
+            <button id="placeDo" class="btn primary" type="button">Place</button>
+            <button id="placeCancel" class="btn ghost" type="button">Cancel</button>
+          </div>
+        </div>
+        <p id="addOut" class="out"></p>
+
+        <details class="note">
+          <summary>why this exists</summary>
+          <p class="hint">Cut one picture for the parts it does well, cut a
+          second for the parts it does better, and put them on one figure.
+          The two pictures do not have to be the same size.</p>
+          <p class="hint">The part arrives with a sway and no parent, because
+          nothing about a picture says where it hangs. Set that in the Layer
+          card &mdash; one dropdown.</p>
+          <p class="hint"><b>Upload parts&hellip;</b> at the top is the other
+          way in, and the faster one when the images already fit: it takes
+          several at once, but every one has to be the figure's exact canvas
+          size. This card takes one image of any size and scales it.</p>
         </details>
       </details>
 

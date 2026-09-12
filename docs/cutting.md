@@ -121,3 +121,111 @@ A mask-based inpainter (`flux-pro/v1/fill`, `bria/eraser`) is the structural
 answer: it writes only inside the mask, so the rest of the image is
 byte-identical by construction. Worth preferring wherever the edit is
 surgical rather than creative.
+
+## Cutting a picture you only have flat
+
+Everything above needs the model to draw the picture again without a part.
+When that is not on the table — no key, no budget, or a picture that came
+from somewhere else — there is a second route, and it costs nothing.
+
+**Paint one rough blob per part, and let the boundary come out of the
+picture.** A model cannot know that a collar belongs to the chest and a strap
+does not. A person says it in five seconds with a brush, and it is the only
+thing they have to say: the name of each blob decides the rig, through the
+same table `tools/import-layers.py` has always used.
+
+    Mark in the studio  ->  tools/cut-by-marks.py  ->  tools/import-layers.py
+
+The cutter reads `source.png` and `marks.png` from the figure's folder plus a
+`marks.json` naming each colour, and writes one full-canvas part per blob.
+
+### Reach, and why the first version was wrong
+
+Every blob spreads outwards over the figure, and the setting that decides what
+a cut even *is* is how far it may spread. A step through flat paint costs 1
+out of the budget; a step across an edge the drawing itself makes costs six,
+so the frontier runs freely inside a shape and grinds to a halt at its
+outline.
+
+The first version had no budget. Every pixel went to its nearest mark, which
+is a **partition**, and a partition is the wrong shape for the job. Two small
+strokes on a bear produced two layers of **64 % and 36 %**, with the seam
+running down the middle of the animal rather than anywhere near what was
+painted. What somebody marking a picture wants is a **selection**: this bit,
+and that bit, and leave the rest alone.
+
+With a 24 px reach the same two strokes take **2.2 % and 1.8 %**, and the
+other 96 % is either kept as one leftover layer at the back or dropped.
+Dropped is what lets you take two limbs out of this picture and the others
+out of a different one.
+
+Reach is also the only thing that trades against how carefully you paint.
+Measured on two marks eroded 10 px inside the true shapes:
+
+| reach | kopf | arm |
+|---|---|---|
+| 15 px | 0.945 | 0.954 |
+| 30 px | 0.882 | 0.951 |
+| 50 px | 0.785 | 0.910 |
+| 90 px | 0.646 | 0.832 |
+
+**Less is better**, as long as the mark is near the edge to begin with. Reach
+buys tolerance for a sloppy mark and pays for it in spill.
+
+### What it is worth
+
+Measured by flattening a finished figure with `tools/flatten.py`, marking the
+flat result, cutting it, and scoring each part against the layer it came
+from. The truth is each layer **as it is visible in the flat picture**, since
+that is all a flat picture contains.
+
+On `baer`, 8 parts, marks painted close to each edge:
+
+| part | IoU | | part | IoU |
+|---|---|---|---|---|
+| fuesse | 0.999 | | kopf | 0.993 |
+| arm-links | 0.998 | | auge | 0.983 |
+| arm-rechts | 0.997 | | kiefer | 0.966 |
+| torso | 0.996 | | kiefer-saber | 0.873 |
+
+**0.9967 over the whole figure**, at a reach of 24 px. The cut takes about
+2 s; the budget is also the iteration count, so a small reach is a fast cut,
+which is the one somebody correcting a mark runs over and over.
+
+### The two things that decide the result
+
+1. **The finer the part, the closer to its edge you paint.** `kiefer-saber`
+   is a thin shape filling 31 % of its own box, lying against a much larger
+   jaw. Marked with a sparse dot it scored **0.477** under the old partition;
+   marked along its length and cut with a 24 px reach, **0.873**. Everything
+   fat scored above 0.96 either way.
+2. **You can only cut what is visible.** On the priest the big parts came out
+   at 0.94 to 0.99, and the two pupils at **0.13 and 0.08** — because 15 and 6
+   of their pixels survive the flatten at all. Eyes want their own drawn
+   images, exactly as the eye rig above says.
+
+### What it does not do
+
+It does not draw what is behind a part. Cut a head out of a flat picture and
+there is a head-shaped hole under it. At the few degrees this engine moves a
+layer that is a seam at the edge rather than a hole in the middle, but it is
+real — and it is the whole reason the method at the top of this file asks a
+model to draw the picture again instead. The hand cut is the cheap route, not
+the good one.
+
+### One figure out of two pictures
+
+A cut can only give you what the picture has. When a second picture has a
+better arm, cut it into its own figure with the leftovers dropped, then bring
+that layer across in the studio's **Add part** card: pick it, drag it into
+place, set its size, press Place.
+
+The scaling is baked into the pixels there and then. `figure.json` has no
+per-layer scale and does not want one - every layer is a full-canvas image,
+and that is what keeps the file readable and the two renderers agreeing.
+
+Two things follow from doing it this way. A part is resampled once, when it
+is placed, so place it at the size you want rather than nudging it later.
+And `import-layers.py` now adds a part it has not seen before as a new layer
+instead of only reporting it, so putting one part on a rigged figure no
+longer costs you the rig.
