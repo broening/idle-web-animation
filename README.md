@@ -11,8 +11,7 @@ It runs on any modern website, and inside the 2022-era Chromium that FiveM
 and RedM use for their in-game pages, so **Chromium 103 is the floor**.
 
 **Live demo:** <https://broening.github.io/idle-web-animation/> — move your
-mouse and the figure follows it. The [studio](https://broening.github.io/idle-web-animation/studio/)
-runs there too, read-only.
+mouse and the figure follows it.
 
 ![Pedro, the demo figure: he breathes, the poncho sways, the smoke rises, the eyes look around and blink](docs/img/pedro.webp)
 
