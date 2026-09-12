@@ -17,3 +17,6 @@ desktop.ini
 
 # unlazy working state
 .unlazy-hook-state.json
+
+# unlazy gates for a single build section
+gates/

@@ -11,153 +11,227 @@
 
 <div class="app">
 
-  <main class="stage-col">
-    <div class="stage-wrap">
-      <div id="stage" class="stage"></div>
-      <canvas id="overlay" class="overlay"></canvas>
-    </div>
+  <!-- One row across the top for everything that is about the figure as a
+       file: which one, making one, saving one. None of it belongs beside a
+       pivot slider, and it was eating the top of the properties column. -->
+  <header class="topbar">
+    <span class="brand">Idle Studio</span>
 
-    <div class="transport">
-      <button id="playBtn" class="btn primary" type="button">Pause</button>
-      <input id="scrub" class="scrub" type="range" min="0" max="8" step="0.01" value="0">
-      <output id="timeOut" class="time">0.00 s</output>
-      <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
-      <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
-      <label class="chk"><input id="showSeams" type="checkbox"> layer edges</label>
+    <select id="figureSel" class="sel small" title="figure"></select>
 
-      <span class="swatches" role="group" aria-label="stage background">
-        <button class="sw sw-alpha on" type="button" data-bg="" title="transparent"></button>
-        <button class="sw" type="button" data-bg="#000000" style="background:#000" title="black"></button>
-        <button class="sw" type="button" data-bg="#7d8590" style="background:#7d8590" title="mid grey"></button>
-        <button class="sw" type="button" data-bg="#ffffff" style="background:#fff" title="white"></button>
-        <input id="bgPick" class="sw pick" type="color" value="#1b6ac9" title="pick a colour">
-      </span>
-    </div>
-  </main>
+    <span class="sep" aria-hidden="true"></span>
 
-  <aside class="panel">
+    <label class="btn ghost file" id="newFromImageBtn" title="one PNG in, one layer out">
+      Flat image&hellip;
+      <input id="newImage" type="file" accept="image/*" hidden>
+    </label>
 
-    <header class="panel-head">
-      <h1>Idle Studio</h1>
-      <select id="figureSel" class="sel"></select>
-      <label class="btn ghost wide file" id="newFromImageBtn">
-        Start from a flat image&hellip;
-        <input id="newImage" type="file" accept="image/*" hidden>
-      </label>
-      <p class="hint tight">One PNG in, one layer out. Split it into parts with
-      a layerize model, then give each part its motion.</p>
-    </header>
+    <input id="newName" class="txt narrow" type="text" spellcheck="false"
+           placeholder="new figure name" autocomplete="off">
+    <button id="newFigureBtn" class="btn" type="button">Create</button>
 
-    <section class="card">
-      <h2>Figure</h2>
-      <p id="serverState" class="hint">checking the server&hellip;</p>
+    <label class="btn ghost file" id="partsBtn"
+           title="read in name order, front first">
+      Upload parts&hellip;
+      <input id="partsInput" type="file" accept="image/*" multiple hidden>
+    </label>
 
-      <div class="row">
-        <input id="newName" class="txt" type="text" spellcheck="false"
-               placeholder="new figure name" autocomplete="off">
-        <button id="newFigureBtn" class="btn" type="button">Create</button>
+    <span class="sep" aria-hidden="true"></span>
+
+    <button id="saveBtn" class="btn primary" type="button">Save</button>
+    <button id="resetBtn" class="btn ghost" type="button">Reset</button>
+
+    <span id="serverState" class="state">checking the server&hellip;</span>
+
+    <span class="spacer"></span>
+
+    <span class="sep" aria-hidden="true"></span>
+
+    <button id="toggleL" class="btn icon" type="button" aria-pressed="true"
+            title="show or hide the layers rail">&#9636;</button>
+    <button id="swapBtn" class="btn icon" type="button"
+            title="put the layers on the other side">&#8646;</button>
+    <button id="toggleR" class="btn icon" type="button" aria-pressed="true"
+            title="show or hide the settings rail">&#9637;</button>
+  </header>
+
+  <div class="shell" id="shell">
+
+    <!-- ------------------------------------------------ layers rail -->
+    <aside class="rail rail-l" id="railL" aria-label="layers">
+      <div class="rail-head">
+        <h2>Layers</h2>
+        <span id="layerCount" class="count"></span>
       </div>
 
-      <div class="row">
-        <label class="btn ghost file" id="partsBtn">
-          Upload parts&hellip;
-          <input id="partsInput" type="file" accept="image/*" multiple hidden>
-        </label>
-        <button id="saveBtn" class="btn primary" type="button">Save</button>
-        <button id="resetBtn" class="btn ghost" type="button">Reset</button>
-      </div>
+      <ul id="layerList" class="layers"></ul>
 
-      <p class="hint">Parts are read in <b>name order, front first</b> &mdash;
-      name them <code>1-head</code>, <code>2-arm</code> and so on. Order is not
-      final: drag the rows below and save. Uploading runs
-      <code>tools/import-layers.py</code>, which keeps a rig you have already
-      corrected and only replaces the pixels.</p>
+      <details class="note">
+        <summary>how the list works</summary>
+        <p class="hint">The list runs <b>front to back</b>, the way a layer
+        palette does. Drag a row by its grip to change draw order.</p>
+        <p class="hint">The dot switches a layer off <b>on the stage only</b>
+        &mdash; the contact sheet still shows what ships.</p>
+        <p class="hint">Pick a layer, then drag its dot on the stage to move
+        the pivot. To move the picture itself, hold <kbd>Alt</kbd> and drag,
+        or use the arrow keys &mdash; 1 px a step, <kbd>Shift</kbd> for 10.
+        That writes <code>offset</code> and leaves the pivot where it is.</p>
+        <p class="hint">The wheel zooms towards the pointer. Dragging
+        anywhere that is not a dot pushes the figure about, and so does the
+        middle button. <b>Fit</b>, or a double-click, puts it back. None of
+        that is saved &mdash; it is a magnifying glass, not a size.</p>
+        <p class="hint">Parts upload in name order, front first &mdash; name
+        them <code>1-head</code>, <code>2-arm</code>. Uploading keeps a rig
+        you have already corrected and only replaces the pixels.</p>
+      </details>
 
       <p id="figureOut" class="out"></p>
-    </section>
+    </aside>
 
-    <section class="card">
-      <h2>Layers</h2>
-      <p class="hint">Pick a layer, then drag its dot on the stage to move the
-      pivot. The number lands straight in figure.json.</p>
-      <p class="hint">Drag a row by its grip to change draw order &mdash; the
-      list runs front to back. The dot switches a layer off on the stage only;
-      the contact sheet still shows what ships.</p>
-      <ul id="layerList" class="layers"></ul>
-    </section>
+    <div class="grip" id="gripL" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="resize the layers rail"></div>
 
-    <section class="card">
-      <h2>Motion</h2>
-      <div id="motionCtl" class="ctl"></div>
-    </section>
-
-    <section class="card">
-      <h2>Check</h2>
-      <p class="hint">A single screenshot cannot prove movement. The contact
-      sheet renders 24 frames of the 8 second window into one image.</p>
-      <div class="row">
-        <button id="sheetBtn" class="btn" type="button">Contact sheet</button>
-        <button id="sheetSave" class="btn ghost" type="button">Save PNG</button>
-        <button id="eventsBtn" class="btn ghost" type="button">Events</button>
+    <!-- ------------------------------------------------ stage -->
+    <main class="stage-col">
+      <div class="stage-wrap">
+        <div id="stage" class="stage"></div>
+        <canvas id="overlay" class="overlay"></canvas>
       </div>
-      <canvas id="sheet" class="sheet"></canvas>
-      <p class="hint mt">A blink holds the eye closed for 86 ms and the sheet
-      samples every 333 ms, so it catches about one in four - and on a figure
-      whose blinks never land on that grid, none at all. Events scans 30
-      seconds at 60 frames and lists what actually fires.</p>
-      <pre id="eventsOut" class="events"></pre>
-    </section>
 
-    <section class="card">
-      <h2>Export</h2>
-      <p class="hint">Master layers stay at full resolution. Pick the size you
-      want for the target and take a zip.</p>
-      <div class="row">
-        <label class="lbl">size
-          <select id="exportSize" class="sel small">
-            <option value="0">master</option>
-            <option value="1500">1500</option>
-            <option value="1000" selected>1000</option>
-            <option value="750">750</option>
-            <option value="512">512</option>
-          </select>
-        </label>
-        <button id="exportBtn" class="btn" type="button">Export folder (zip)</button>
+      <div class="transport">
+        <button id="playBtn" class="btn primary" type="button">Pause</button>
+        <input id="scrub" class="scrub" type="range" min="0" max="8" step="0.01" value="0">
+        <output id="timeOut" class="time">0.00 s</output>
+        <label class="chk"><input id="loopWindow" type="checkbox" checked> loop the window</label>
+        <label class="chk"><input id="showPivots" type="checkbox" checked> pivots</label>
+        <label class="chk"><input id="showSeams" type="checkbox"> layer edges</label>
+
+        <span class="zoomctl">
+          <button id="zoomFit" class="btn ghost" type="button"
+                  title="back to the whole figure - double-clicking the stage does the same">Fit</button>
+          <output id="zoomOut" class="zoomval">100 %</output>
+        </span>
+
+        <span class="swatches" role="group" aria-label="stage background">
+          <button class="sw sw-alpha on" type="button" data-bg="" title="transparent"></button>
+          <button class="sw" type="button" data-bg="#000000" style="background:#000" title="black"></button>
+          <button class="sw" type="button" data-bg="#7d8590" style="background:#7d8590" title="mid grey"></button>
+          <button class="sw" type="button" data-bg="#ffffff" style="background:#fff" title="white"></button>
+          <input id="bgPick" class="sw pick" type="color" value="#1b6ac9" title="pick a colour">
+        </span>
       </div>
-      <p id="exportOut" class="out"></p>
-    </section>
+    </main>
 
-    <section class="card">
-      <h2>Cut test (IoU)</h2>
-      <p class="hint">Load a machine-cut layer and compare it against the
-      hand-made one. IoU is the overlap of the two shapes: 1.00 is identical,
-      below about 0.85 the part will not line up.</p>
-      <p class="hint">The layerize models name their own output, so a filename
-      rarely matches. Auto-match compares each file against every truth layer
-      and keeps the best, and flags a win that was too close to call.</p>
-      <div class="row">
-        <label class="chk"><input id="iouAuto" type="checkbox" checked> auto-match</label>
-        <label class="lbl">truth
-          <select id="iouTruth" class="sel small"></select>
-        </label>
-        <label class="btn ghost file">
-          machine cut&hellip;
-          <input id="iouFile" type="file" accept="image/*" multiple hidden>
-        </label>
-      </div>
-      <table id="iouTable" class="iou"></table>
-    </section>
+    <div class="grip" id="gripR" role="separator" aria-orientation="vertical"
+         tabindex="0" aria-label="resize the settings rail"></div>
 
-    <section class="card">
-      <h2>JSON</h2>
-      <div class="row">
-        <button id="jsonBtn" class="btn" type="button">Show current</button>
-        <button id="jsonCopy" class="btn ghost" type="button">Copy</button>
-      </div>
-      <textarea id="jsonOut" class="json" spellcheck="false" rows="10"></textarea>
-    </section>
+    <!-- ------------------------------------------------ settings rail -->
+    <aside class="rail rail-r" id="railR" aria-label="settings">
 
-  </aside>
+      <details class="card" open>
+        <summary>Layer</summary>
+        <div id="layerCtl" class="ctl"></div>
+        <details class="note">
+          <summary>what these do</summary>
+          <p class="hint"><code>parent</code> only offers layers that are not
+          already below this one, so the chain cannot close into a loop.</p>
+          <p class="hint">The dot in the list is a stage switch and is not
+          saved. <code>opacity</code> is a real field and is.</p>
+        </details>
+      </details>
+
+      <details class="card" open>
+        <summary>Motion</summary>
+        <div id="motionCtl" class="ctl"></div>
+        <details class="note">
+          <summary>why once each</summary>
+          <p class="hint">Each type once per layer. Two blinks read the same
+          clock and fire as one; two drifts make the layer jump between
+          rises.</p>
+        </details>
+      </details>
+
+      <details class="card">
+        <summary>Check</summary>
+        <div class="row">
+          <button id="sheetBtn" class="btn" type="button">Contact sheet</button>
+          <button id="sheetSave" class="btn ghost" type="button">Save PNG</button>
+          <button id="eventsBtn" class="btn ghost" type="button">Events</button>
+        </div>
+        <canvas id="sheet" class="sheet"></canvas>
+        <pre id="eventsOut" class="events"></pre>
+        <details class="note">
+          <summary>why two views</summary>
+          <p class="hint">A single screenshot cannot prove movement. The
+          contact sheet renders 24 frames of the 8 second window into one
+          image.</p>
+          <p class="hint">A blink holds the eye closed for 86 ms and the sheet
+          samples every 333 ms, so it catches about one in four &mdash; and on
+          a figure whose blinks never land on that grid, none at all. Events
+          scans 30 seconds at 60 frames and lists what actually fires.</p>
+        </details>
+      </details>
+
+      <details class="card">
+        <summary>Export</summary>
+        <div class="row">
+          <label class="lbl">size
+            <select id="exportSize" class="sel small">
+              <option value="0">master</option>
+              <option value="1500">1500</option>
+              <option value="1000" selected>1000</option>
+              <option value="750">750</option>
+              <option value="512">512</option>
+            </select>
+          </label>
+          <button id="exportBtn" class="btn" type="button">Folder (zip)</button>
+        </div>
+        <p id="exportOut" class="out"></p>
+        <p class="hint">Master layers stay at full resolution. Pick the size
+        the target wants and take a zip.</p>
+      </details>
+
+      <details class="card">
+        <summary>Cut test (IoU)</summary>
+        <div class="row">
+          <label class="chk"><input id="iouAuto" type="checkbox" checked> auto-match</label>
+          <label class="lbl">truth
+            <select id="iouTruth" class="sel small"></select>
+          </label>
+          <label class="btn ghost file">
+            machine cut&hellip;
+            <input id="iouFile" type="file" accept="image/*" multiple hidden>
+          </label>
+        </div>
+        <table id="iouTable" class="iou"></table>
+        <details class="note">
+          <summary>what the number means</summary>
+          <p class="hint">IoU is the overlap of the two shapes: 1.00 is
+          identical, below about 0.85 the part will not line up.</p>
+          <p class="hint">The layerize models name their own output, so a
+          filename rarely matches. Auto-match compares each file against every
+          truth layer, keeps the best, and flags a win that was too close to
+          call.</p>
+        </details>
+      </details>
+
+      <details class="card">
+        <summary>JSON</summary>
+        <div class="row">
+          <button id="jsonBtn" class="btn" type="button">Show current</button>
+          <button id="jsonApply" class="btn primary" type="button">Apply</button>
+          <button id="jsonCopy" class="btn ghost" type="button">Copy</button>
+        </div>
+        <textarea id="jsonOut" class="json" spellcheck="false" rows="10"></textarea>
+        <p id="jsonMsg" class="out"></p>
+        <p class="hint">The way out when a knob is missing. <b>Apply</b> reads
+        the box back in: bad JSON, a parent that is not a layer, or a parent
+        loop is refused and nothing changes. Not saved until you press
+        Save.</p>
+      </details>
+
+    </aside>
+  </div>
 </div>
 
 <script src="../player/idle.js"></script>

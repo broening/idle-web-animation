@@ -22,6 +22,8 @@
     images: null,       /* preloaded Image bank, for canvas work */
     selected: null,     /* layer id */
     dragging: false,
+    nudging: null,      /* last stage point of an alt-drag, in canvas pixels */
+    panning: null,      /* pointer and pan at the start of a view drag */
     window: 8,
     stageBg: null,  /* null = transparent, else a css colour */
     unsaved: {}     /* figures that live only in this page, by name */
@@ -53,7 +55,10 @@
       });
   }
 
-  function mountFigure(name, fig, base) {
+  /* keepDirty: mount a figure that did NOT come off the disk, so the Save
+   * button keeps knowing there is something to save. The JSON box is the
+   * only caller that needs it. */
+  function mountFigure(name, fig, base, keepDirty) {
     state.name = name;
     state.figure = fig;
     state.base = base;
@@ -61,6 +66,12 @@
     /* A new figure starts with every layer on. Carrying the eye state across
      * would hide a layer of the new figure that happens to share an id. */
     state.hidden = {};
+    /* And it starts whole. A pan left over from the last figure would put
+     * the next one somewhere off the edge, which reads as a figure that
+     * failed to load. */
+    view.zoom = 1;
+    view.panX = 0;
+    view.panY = 0;
     state.window = (fig.motion && fig.motion.windowSeconds) || 8;
     $('scrub').max = String(state.window);
     $('scrub').value = '0';
@@ -75,16 +86,17 @@
     $('playBtn').textContent = 'Pause';
 
     buildLayerList();
+    buildLayerCard();
     buildMotionControls();
     buildIouTruthList();
-    sizeOverlay();
+    refitStage();
     $('sheet').width = 0;
     $('eventsOut').textContent = '';
     $('iouTable').innerHTML = '';
 
     /* Whatever was just mounted is, by definition, what is on disk. Every
      * later edit is measured against this string. */
-    markClean();
+    if (!keepDirty) markClean();
 
     state.images = null;
     return Idle.loadImages(fig, base).then(function (imgs) { state.images = imgs; });
@@ -420,6 +432,8 @@
     var ul = $('layerList');
     ul.innerHTML = '';
     var layers = state.figure.layers || [];
+    $('layerCount').textContent = layers.length +
+      (layers.length === 1 ? ' layer' : ' layers');
     /* Draw order is back to front. Read it top to bottom as front to back,
      * the way a layer palette does. */
     for (var i = layers.length - 1; i >= 0; i--) {
@@ -452,6 +466,10 @@
         var nm = document.createElement('span');
         nm.className = 'nm';
         nm.textContent = L.id;
+        /* The chain and the role, without spending a single pixel of a row
+         * that is already full. The Layer card shows both properly. */
+        nm.title = (L.parent ? 'child of ' + L.parent : 'root') +
+                   (L.role ? '  ·  ' + L.role : '');
 
         var tags = document.createElement('span');
         tags.className = 'tags';
@@ -460,7 +478,10 @@
         var pv = document.createElement('span');
         pv.className = 'pv';
         var p = L.pivot || [0.5, 0.5];
-        pv.textContent = p[0].toFixed(2) + ' / ' + p[1].toFixed(2);
+        var nudged = offsetLabel(L);
+        pv.textContent = p[0].toFixed(2) + ' / ' + p[1].toFixed(2) +
+                         (nudged ? '  ✥' : '');
+        pv.title = nudged ? ('nudged by' + nudged) : '';
 
         li.appendChild(grip);
         li.appendChild(eye);
@@ -471,6 +492,7 @@
         li.addEventListener('click', function () {
           state.selected = L.id;
           buildLayerList();
+          buildLayerCard();
           buildMotionControls();
         });
 
@@ -527,6 +549,340 @@
   }
 
   /* ================================================================== *
+   * The parent chain
+   *
+   * Two small functions, kept side by side and free of the DOM, because
+   * tools/test-agreement.mjs lifts them straight out of this file and runs
+   * them. They are the only thing standing between the panel and a figure
+   * whose chainDepth() never returns.
+   * ================================================================== */
+
+  /* Every id that reads `id` as an ancestor, plus `id` itself. The parent
+   * dropdown offers everything outside this set, which is exactly the set
+   * that cannot close a loop.
+   *
+   * Grown one pass at a time rather than walked upwards, because the JSON
+   * textarea is allowed to hand us a figure that already has a ring in it,
+   * and a plain walk on a ring never comes back. */
+  function descendantIds(layers, id) {
+    var out = {}, i, j;
+    out[id] = true;
+    for (j = 0; j < layers.length; j++) {
+      var grew = false;
+      for (i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        if (out[L.id]) continue;
+        if (L.parent && out[L.parent]) { out[L.id] = true; grew = true; }
+      }
+      /* A pass that adds nothing means the set is closed. On a ring that is
+       * the pass right after the one that closed it. */
+      if (!grew) break;
+    }
+    return out;
+  }
+
+  /* null when the chain is sound, otherwise one sentence saying what is
+   * wrong. A ring and a parent that does not exist are both fatal, and in
+   * the same place: the engine walks the chain on every single frame. */
+  function cycleTrouble(layers) {
+    var have = {}, i, k;
+    for (i = 0; i < layers.length; i++) have[layers[i].id] = layers[i];
+    for (i = 0; i < layers.length; i++) {
+      var L = layers[i];
+      if (!L.parent) continue;
+      if (!have[L.parent]) {
+        return 'layer "' + L.id + '" has parent "' + L.parent +
+               '", which is not a layer';
+      }
+      var at = have[L.parent], steps = 0;
+      while (at && steps++ <= layers.length) {
+        if (at.id === L.id) {
+          return 'parent loop: "' + L.id + '" ends up as its own ancestor';
+        }
+        at = at.parent ? have[at.parent] : null;
+      }
+    }
+    return null;
+  }
+  /* What has to be true before a hand-typed figure may go on the stage.
+   *
+   * Not a schema. The engine already defends itself against a bad number,
+   * and the panel is not the place to re-state every field. These are the
+   * mistakes that end in a frozen tab or in the studio pointing at a layer
+   * that is not there. */
+  function figureTrouble(fig) {
+    if (!fig || typeof fig !== 'object' || Array.isArray(fig)) {
+      return 'the top level has to be an object';
+    }
+    if (!Array.isArray(fig.layers) || !fig.layers.length) {
+      return '"layers" has to be a list with at least one layer in it';
+    }
+    var seen = {};
+    for (var i = 0; i < fig.layers.length; i++) {
+      var L = fig.layers[i];
+      if (!L || typeof L !== 'object' || Array.isArray(L)) {
+        return 'layer ' + i + ' is not an object';
+      }
+      if (typeof L.id !== 'string' || !L.id) {
+        return 'layer ' + i + ' has no id';
+      }
+      /* The engine survives a duplicate id - first wins - but the studio
+       * does not: the eye toggles, the pivot drag and boxOf() all key on
+       * it, so the second copy would be unreachable and the first would
+       * answer for both. */
+      if (seen[L.id]) return 'two layers share the id "' + L.id + '"';
+      seen[L.id] = true;
+      if (!L.src && !(L.frames && L.frames.length)) {
+        return 'layer "' + L.id + '" has neither src nor frames';
+      }
+    }
+    return cycleTrouble(fig.layers);
+  }
+  /* end of the parent-chain guard */
+
+  /* ================================================================== *
+   * Layer properties
+   *
+   * The five fields that used to need a text editor: what a layer hangs
+   * from, what part it plays in a blink, how it composites, how opaque it
+   * starts, and what it is called for a reader that cannot see it.
+   * ================================================================== */
+
+  /* The blend modes that mean the same thing in the page and in the contact
+   * sheet. `plus-darker` is deliberately absent: canvas has no equivalent, so
+   * it is the one value that would make the sheet lie about what ships.
+   * `normal` is first and stands for "no blend" - picking it drops the field
+   * rather than writing a default nobody needs to read. */
+  var BLENDS = ['normal', 'screen', 'multiply', 'overlay',
+                'darken', 'lighten', 'difference', 'plus-lighter'];
+
+  var ROLES = ['eyesOpen', 'eyesClosed'];
+
+  function grp(title, sub) {
+    var g = document.createElement('div');
+    g.className = 'grp';
+    var h = document.createElement('h3');
+    h.textContent = title;
+    if (sub) {
+      var s = document.createElement('span');
+      s.textContent = '  ' + sub;
+      h.appendChild(s);
+    }
+    g.appendChild(h);
+    return g;
+  }
+
+  function hintLine(text) {
+    var p = document.createElement('p');
+    p.className = 'hint tight';
+    p.textContent = text;
+    return p;
+  }
+
+  /* A labelled dropdown on the same grid as a slider, so the panel reads as
+   * one column of fields rather than two kinds of control. `empty` adds a
+   * leading entry that stands for "not set"; pass null to leave it out. */
+  function picker(label, value, options, empty, onChange) {
+    var row = document.createElement('label');
+    row.className = 'field';
+
+    var t = document.createElement('span');
+    t.textContent = label;
+
+    var sel = document.createElement('select');
+    sel.className = 'sel';
+    if (empty) {
+      var o0 = document.createElement('option');
+      o0.value = '';
+      o0.textContent = empty;
+      sel.appendChild(o0);
+    }
+    for (var i = 0; i < options.length; i++) {
+      var o = document.createElement('option');
+      o.value = options[i];
+      o.textContent = options[i];
+      sel.appendChild(o);
+    }
+
+    /* A value the list does not offer is still a value in the file. Without
+     * this the select would show blank, the field would look unset, and the
+     * next touch of any control would quietly overwrite it - a figure that
+     * came in with "blend": "hue" would lose it without a word. */
+    if (value && options.indexOf(value) < 0) {
+      var keep = document.createElement('option');
+      keep.value = value;
+      keep.textContent = value + '  (in the file, not offered)';
+      sel.insertBefore(keep, sel.firstChild);
+    }
+
+    sel.value = value;
+    sel.addEventListener('change', function () { onChange(sel.value); });
+
+    row.appendChild(t); row.appendChild(sel);
+    return row;
+  }
+
+  function textField(label, value, placeholder, onChange) {
+    var row = document.createElement('label');
+    row.className = 'field';
+
+    var t = document.createElement('span');
+    t.textContent = label;
+
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'txt';
+    inp.spellcheck = false;
+    inp.value = value;
+    if (placeholder) inp.placeholder = placeholder;
+    inp.addEventListener('input', function () { onChange(inp.value); });
+
+    row.appendChild(t); row.appendChild(inp);
+    return row;
+  }
+
+  /* A blink is only ever visible through a role, so the two ways to write one
+   * that does nothing are worth saying out loud - they cost half an hour to
+   * find on the stage.
+   *
+   * A blink with only an `eyesClosed` layer is NOT one of them. That is the
+   * normal shape for a face whose open eyes are painted into the head, which
+   * is how pedro is built: the closed lids are drawn over the top and the
+   * open ones need no layer of their own. */
+  function blinkTrouble(fig) {
+    var layers = (fig && fig.layers) || [];
+    var hasBlink = false, hasRole = false;
+    for (var i = 0; i < layers.length; i++) {
+      var ms = layers[i].motions || [];
+      for (var j = 0; j < ms.length; j++) {
+        if (ms[j] && ms[j].type === 'blink') hasBlink = true;
+      }
+      var r = layers[i].role;
+      if (r === 'eyesOpen' || r === 'eyesClosed') hasRole = true;
+    }
+    if (hasBlink && !hasRole) {
+      return 'A blink is set, but no layer carries eyesOpen or eyesClosed. ' +
+             'Nothing on the stage will change.';
+    }
+    if (hasRole && !hasBlink) {
+      return 'A layer carries an eye role, but no layer has a blink to ' +
+             'drive it. The role never fires.';
+    }
+    return null;
+  }
+
+  function buildLayerCard() {
+    var box = $('layerCtl');
+    box.innerHTML = '';
+    if (!state.figure) return;
+
+    var L = selectedLayer();
+    if (!L) {
+      box.appendChild(hintLine('Pick a layer in the list above.'));
+      return;
+    }
+
+    var layers = state.figure.layers || [];
+    var g = grp(L.id, L.parent ? ('child of ' + L.parent) : 'root');
+
+    /* Everything that already hangs off this layer is left out of the list,
+     * which is the whole of the ring guard: a layer can only be given a
+     * parent that is not already downstream of it. */
+    var blocked = descendantIds(layers, L.id);
+    var free = [];
+    for (var i = 0; i < layers.length; i++) {
+      if (!blocked[layers[i].id]) free.push(layers[i].id);
+    }
+    g.appendChild(picker('parent', L.parent || '', free, '— none (root) —',
+      function (v) {
+        if (v) L.parent = v; else delete L.parent;
+        /* The engine reads the chain out of the figure on every frame, so
+         * the stage is already right. The two panels that print the chain
+         * are not, and neither is this card's own heading. */
+        buildLayerList();
+        buildLayerCard();
+        buildMotionControls();
+        refreshStill();
+      }));
+
+    g.appendChild(picker('role', L.role || '', ROLES, '— none —',
+      function (v) {
+        if (v) L.role = v; else delete L.role;
+        buildLayerList();
+        buildLayerCard();
+        refreshStill();
+      }));
+
+    g.appendChild(picker('blend', L.blend || 'normal', BLENDS, null,
+      function (v) {
+        if (v && v !== 'normal') L.blend = v; else delete L.blend;
+        /* mix-blend-mode is written once, while the stage is built. Writing
+         * it straight onto the node keeps a rebuild out of a dropdown. */
+        var bx = boxOf(L.id);
+        if (bx) bx.style.mixBlendMode = L.blend || '';
+        refreshStill();
+      }));
+
+    /* Out of the file at 1, because that is what the engine assumes anyway
+     * and a figure.json full of "opacity": 1 is noise in a diff. */
+    g.appendChild(slider('opacity', L.opacity != null ? L.opacity : 1,
+      function (v) {
+        if (v >= 1) delete L.opacity; else L.opacity = v;
+      }, 'opacity'));
+
+    g.appendChild(textField('alt', L.alt || '', 'what this part is',
+      function (v) {
+        if (v) L.alt = v; else delete L.alt;
+        /* Same story as blend: set on the <img> when the stage is built. */
+        var bx = boxOf(L.id);
+        if (!bx) return;
+        var im = bx.getElementsByTagName('img');
+        for (var k = 0; k < im.length; k++) im[k].alt = L.alt || '';
+      }));
+
+    box.appendChild(g);
+
+    var msg = blinkTrouble(state.figure);
+    if (msg) box.appendChild(hintLine(msg));
+  }
+
+  /* Rebuild the stage from the figure object as it stands now.
+   *
+   * Three things are decided once, while the DOM goes up, and never again:
+   * mix-blend-mode, the alt text, and whether a layer gets a `filter` at all.
+   * The last one is the trap - `lit` is true only for a layer that already
+   * carried a glow or a charge at build time, so a glow added from the panel
+   * wrote its brightness into a node that ignores it. The panel said one
+   * thing and the stage showed another, which is exactly the failure this
+   * whole card exists to remove.
+   *
+   * Blend and alt are cheap enough to write straight onto the nodes. A change
+   * to the motion list is not, so it comes through here.
+   *
+   * Time, play state, pointer and the eye toggles survive. The dirty mark
+   * deliberately does not move: nothing here has been near the disk. */
+  function rebuildStage() {
+    if (!state.fig) return;
+    var t = state.fig.time;
+    var wasPlaying = state.fig.playing;
+    var px = state.fig.pointerX, py = state.fig.pointerY;
+
+    state.fig.destroy();
+    state.fig = new Idle.IdleFigure($('stage'), state.figure, state.base,
+                                    { background: false });
+    state.fig.loop = $('loopWindow').checked ? state.window : 0;
+    state.fig.pointerX = px;
+    state.fig.pointerY = py;
+    state.fig.time = t;
+    applyHidden();
+    if (wasPlaying) state.fig.play(); else state.fig.render(t);
+    /* The constructor fits the new stage and writes its own transform, so
+     * the zoom and pan have to be put back on top of it. */
+    applyView();
+    drawOverlay();
+  }
+
+  /* ================================================================== *
    * Motion controls
    * ================================================================== */
 
@@ -554,7 +910,16 @@
     hold:       [0.05, 4, 0.05],
     ramp:       [0.05, 3, 0.05],
     showFrom:   [1, 6, 1],
-    grow:       [0, 0.3, 0.005]
+    grow:       [0, 0.3, 0.005],
+    /* drift travels somewhere and stays, so its numbers are the only ones
+     * here that are not small and positive. They were missing entirely, and
+     * the generic 0..10 fallback then drew a slider that could not reach the
+     * default dy of -120 - a block you could add but not steer. */
+    dx:         [-300, 300, 1],
+    dy:         [-300, 300, 1],
+    life:       [0.3, 12, 0.05],
+    wander:     [0, 40, 0.5],
+    opacity:    [0, 1, 0.01]
   };
 
   function slider(label, value, onChange, key) {
@@ -637,17 +1002,50 @@
 
     var ms = L.motions || [];
     for (var i = 0; i < ms.length; i++) {
-      (function (m) {
+      (function (m, mi) {
         var g = document.createElement('div');
         g.className = 'grp';
         var h = document.createElement('h3');
         h.textContent = m.type;
-        if (m.mode) {
-          var s = document.createElement('span');
-          s.textContent = '  ' + m.mode;
-          h.appendChild(s);
-        }
+
+        var kill = document.createElement('button');
+        kill.type = 'button';
+        kill.className = 'x';
+        kill.textContent = '×';
+        kill.title = 'remove this motion';
+        kill.addEventListener('click', function () {
+          ms.splice(mi, 1);
+          /* An empty motions array is the same as none, and the shorter of
+           * the two is what belongs in the file. */
+          if (!ms.length) delete L.motions;
+          rebuildStage();
+          buildLayerList();
+          /* The card carries the blink advice, and that reading just
+           * changed. */
+          buildLayerCard();
+          buildMotionControls();
+        });
+        h.appendChild(kill);
         g.appendChild(h);
+
+        /* loop or burst. Kept out of MOTION_PARAMS on purpose: that table
+         * lists numbers the engine reads through cfg, and the agreement test
+         * holds it to exactly those. This one is a word. */
+        if (m.type === 'flipbook') {
+          g.appendChild(picker('mode', m.mode || 'burst', ['loop', 'burst'],
+            null, function (v) {
+              m.mode = v;
+              refreshStill();
+            }));
+        }
+
+        /* Only flipbook. charge reads no frames at all - it drives opacity,
+         * and a layer with a single image goes dark between flashes exactly
+         * as it should. */
+        if (m.type === 'flipbook' && !(L.frames && L.frames.length)) {
+          g.appendChild(hintLine('This layer has one image, not frames, so ' +
+            'a flipbook has nothing to switch between.'));
+        }
 
         var known = MOTION_PARAMS[m.type] || {};
         var keys = [], seen = {};
@@ -671,8 +1069,72 @@
           })(keys[q]);
         }
         box.appendChild(g);
-      })(ms[i]);
+      })(ms[i], i);
     }
+
+    /* Add a block. Only the types this layer does not carry yet: two blinks
+     * on one layer read the same clock and fire as one event, and two drifts
+     * make the layer jump between two rises, which is the flicker the
+     * agreement test already refuses. */
+    var used = {}, key;
+    for (i = 0; i < ms.length; i++) used[ms[i].type] = true;
+    var spare = [];
+    for (key in MOTION_PARAMS) {
+      if (Object.prototype.hasOwnProperty.call(MOTION_PARAMS, key) &&
+          !used[key]) spare.push(key);
+    }
+
+    var ga = document.createElement('div');
+    ga.className = 'grp';
+    var row = document.createElement('div');
+    row.className = 'row';
+
+    var pick = document.createElement('select');
+    pick.className = 'sel small';
+    for (i = 0; i < spare.length; i++) {
+      var op = document.createElement('option');
+      op.value = spare[i];
+      op.textContent = spare[i];
+      pick.appendChild(op);
+    }
+
+    var add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'btn';
+    add.textContent = 'Add motion';
+
+    if (!spare.length) {
+      var none = document.createElement('option');
+      none.textContent = 'all eight are on this layer';
+      pick.appendChild(none);
+      pick.disabled = true;
+      add.disabled = true;
+    }
+
+    add.addEventListener('click', function () {
+      var type = pick.value;
+      if (!type || !MOTION_PARAMS[type]) return;
+      /* Every number the engine reads, written out at its own default, so
+       * the block arrives with a full set of sliders rather than a handful
+       * and some invisible defaults behind them. */
+      var m = { type: type };
+      var d = MOTION_PARAMS[type];
+      for (var k in d) {
+        if (Object.prototype.hasOwnProperty.call(d, k)) m[k] = d[k];
+      }
+      if (type === 'flipbook') m.mode = 'burst';
+      if (!L.motions) L.motions = [];
+      L.motions.push(m);
+      rebuildStage();
+      buildLayerList();
+      buildLayerCard();
+      buildMotionControls();
+    });
+
+    row.appendChild(pick);
+    row.appendChild(add);
+    ga.appendChild(row);
+    box.appendChild(ga);
 
     /* Whole-figure values live at the bottom, where they cannot be mistaken
      * for something that belongs to the selected layer. */
@@ -724,33 +1186,119 @@
     c.height = Math.round(r.height * dpr);
   }
 
-  /* Stage pixel (0..w, 0..h) to overlay pixel. */
-  function stageToOverlay(px, py) {
-    var host = $('stage');
-    var r = host.getBoundingClientRect();
+  /* ------------------------------------------------------------------ *
+   * The view: a magnifying glass over the stage
+   *
+   * `zoom` 1 means the whole figure fits, which is where every figure
+   * starts. Above that you are closer than the frame; the pan then says
+   * which part of it you are looking at, in screen pixels.
+   *
+   * None of this is part of the figure. The contact sheet, the events scan,
+   * the export and the IoU test all render from the figure data at a fixed
+   * size, so nothing here can reach them - a magnifying glass, not a scale.
+   * ------------------------------------------------------------------ */
+
+  var view = { zoom: 1, panX: 0, panY: 0 };
+  var ZOOM_MIN = 0.25;
+  var ZOOM_MAX = 12;
+
+  /* One description of where the figure sits, for everything that needs it.
+   * The two conversions below used to carry a copy of this each, which is
+   * two chances for them to disagree about the same pixel. */
+  function viewMap() {
+    var r = $('stage').getBoundingClientRect();
     var f = state.figure;
-    var w = (f.size && f.size.width) || 1000;
-    var h = (f.size && f.size.height) || 1000;
-    var k = Math.min(r.width / w, r.height / h);
-    var dpr = window.devicePixelRatio || 1;
+    var w = (f && f.size && f.size.width) || 1000;
+    var h = (f && f.size && f.size.height) || 1000;
+    var fit = Math.min(r.width / w, r.height / h);
+    return {
+      w: w, h: h,
+      rw: r.width, rh: r.height,
+      fit: fit,
+      k: fit * view.zoom,
+      cx: r.width / 2 + view.panX,
+      cy: r.height / 2 + view.panY,
+      dpr: window.devicePixelRatio || 1
+    };
+  }
+
+  /* The same projection as stageToOverlay, against a map you already have.
+   * drawOverlay runs on every frame and once per layer, and each call to
+   * viewMap() reads a bounding rect - 35 forced layouts a frame on pedro. */
+  function project(m, px, py) {
     return [
-      (r.width / 2 + (px - w / 2) * k) * dpr,
-      (r.height / 2 + (py - h / 2) * k) * dpr
+      (m.cx + (px - m.w / 2) * m.k) * m.dpr,
+      (m.cy + (py - m.h / 2) * m.k) * m.dpr
     ];
   }
 
+  /* Stage pixel (0..w, 0..h) to overlay pixel. */
+  function stageToOverlay(px, py) {
+    return project(viewMap(), px, py);
+  }
+
   function overlayToStage(cx, cy) {
-    var host = $('stage');
-    var r = host.getBoundingClientRect();
-    var f = state.figure;
-    var w = (f.size && f.size.width) || 1000;
-    var h = (f.size && f.size.height) || 1000;
-    var k = Math.min(r.width / w, r.height / h);
-    var dpr = window.devicePixelRatio || 1;
+    var m = viewMap();
     return [
-      (cx / dpr - r.width / 2) / k + w / 2,
-      (cy / dpr - r.height / 2) / k + h / 2
+      (cx / m.dpr - m.cx) / m.k + m.w / 2,
+      (cy / m.dpr - m.cy) / m.k + m.h / 2
     ];
+  }
+
+  /* The player fits the figure to the host and writes that as a transform.
+   * The pan and the zoom ride on top of it, written here rather than there:
+   * how close someone is looking is a property of this page, not of the
+   * character, and idle.js ships to targets that have no viewport at all.
+   *
+   * The pan sits before the scale on purpose. A translate that comes first
+   * in the list is applied last, so it moves the figure by screen pixels -
+   * dragging 120 px moves it 120 px whatever the zoom is. */
+  function applyView() {
+    if (!state.fig || !state.fig.stage) return;
+    var m = viewMap();
+    state.fig.stage.style.transform =
+      'translate(-50%, -50%) translate(' +
+      view.panX.toFixed(2) + 'px, ' + view.panY.toFixed(2) + 'px) scale(' +
+      m.k.toFixed(5) + ')';
+    var out = $('zoomOut');
+    if (out) out.textContent = Math.round(view.zoom * 100) + ' %';
+  }
+
+  /* Everything that changes how much room the stage has ends here: the
+   * window, a rail folding, a rail being dragged, a figure being mounted.
+   * fit() alone would throw the zoom away, because it writes the whole
+   * transform itself. */
+  function refitStage() {
+    if (state.fig) state.fig.fit();
+    applyView();
+    sizeOverlay();
+    drawOverlay();
+  }
+
+  function resetView() {
+    view.zoom = 1;
+    view.panX = 0;
+    view.panY = 0;
+    applyView();
+    drawOverlay();
+  }
+
+  /* Zoom about a point, so the thing under the pointer stays under it. The
+   * alternative is zooming about the middle, which walks whatever you were
+   * looking at off the edge after two notches. */
+  function zoomAt(next, cx, cy) {
+    next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, next));
+    if (next === view.zoom) return;
+
+    var before = overlayToStage(cx, cy);
+    view.zoom = next;
+
+    var m = viewMap();
+    view.panX = cx / m.dpr - m.rw / 2 - (before[0] - m.w / 2) * m.k;
+    view.panY = cy / m.dpr - m.rh / 2 - (before[1] - m.h / 2) * m.k;
+
+    applyView();
+    drawOverlay();
   }
 
   function drawOverlay() {
@@ -760,14 +1308,14 @@
     if (!state.figure || !$('showPivots').checked) return;
 
     var f = state.figure;
-    var w = (f.size && f.size.width) || 1000;
-    var h = (f.size && f.size.height) || 1000;
+    var m = viewMap();
+    var w = m.w, h = m.h;
     var layers = f.layers || [];
 
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
       var p = L.pivot || [0.5, 0.5];
-      var xy = stageToOverlay(p[0] * w, p[1] * h);
+      var xy = project(m, p[0] * w, p[1] * h);
       var on = (L.id === state.selected);
 
       g.beginPath();
@@ -785,10 +1333,68 @@
 
         g.font = '600 12px Segoe UI, system-ui, sans-serif';
         g.fillStyle = 'rgba(230,233,238,0.9)';
-        g.fillText(L.id + '  ' + p[0].toFixed(3) + ' / ' + p[1].toFixed(3),
+        g.fillText(L.id + '  ' + p[0].toFixed(3) + ' / ' + p[1].toFixed(3) +
+                   offsetLabel(L),
                    xy[0] + 14, xy[1] - 12);
       }
     }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Nudging a layer: offset, in canvas pixels.
+   *
+   * Separate from the pivot on purpose. The pivot is the joint and belongs to
+   * the rig; the offset only says the pixels arrived a hair off. Cutting a
+   * figure leaves a part two or three pixels out of place often enough that
+   * the alternative was re-cutting the image for a seam nobody can see once
+   * it moves.
+   * ------------------------------------------------------------------ */
+
+  function offsetOf(L) {
+    var o = L.offset;
+    return [(o && +o[0]) || 0, (o && +o[1]) || 0];
+  }
+
+  function offsetLabel(L) {
+    var o = offsetOf(L);
+    if (!o[0] && !o[1]) return '';
+    return '   ' + (o[0] > 0 ? '+' : '') + o[0] + ' / ' +
+           (o[1] > 0 ? '+' : '') + o[1] + ' px';
+  }
+
+  /* Written back at one decimal. A drag on a stage scaled to a third of the
+   * canvas produces numbers like 2.6666667, and figure.json is read by
+   * people. The running total is kept in stage coordinates, not here, so
+   * rounding cannot make a slow drag stand still. */
+  function nudgeLayer(L, dx, dy) {
+    var o = offsetOf(L);
+    var x = Math.round((o[0] + dx) * 10) / 10;
+    var y = Math.round((o[1] + dy) * 10) / 10;
+    if (x === 0 && y === 0) delete L.offset;
+    else L.offset = [x, y];
+    refreshStill();
+    buildLayerList();
+    refreshSaveState();
+  }
+
+  var ARROW_STEP = {
+    ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    ArrowUp: [0, -1], ArrowDown: [0, 1]
+  };
+
+  function bindNudgeKeys() {
+    window.addEventListener('keydown', function (e) {
+      var step = ARROW_STEP[e.key];
+      if (!step || e.altKey || e.ctrlKey || e.metaKey) return;
+      /* An arrow key inside a slider or a text box belongs to that box. */
+      var tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      var L = selectedLayer();
+      if (!L) return;
+      var k = e.shiftKey ? 10 : 1;
+      e.preventDefault();
+      nudgeLayer(L, step[0] * k, step[1] * k);
+    });
   }
 
   function bindPivotDrag() {
@@ -797,17 +1403,19 @@
     function nearestPivot(cx, cy) {
       var f = state.figure;
       if (!f) return null;
-      var w = (f.size && f.size.width) || 1000;
-      var h = (f.size && f.size.height) || 1000;
+      var m = viewMap();
       var best = null, bestD = 1e9;
       var layers = f.layers || [];
       for (var i = 0; i < layers.length; i++) {
         var p = layers[i].pivot || [0.5, 0.5];
-        var xy = stageToOverlay(p[0] * w, p[1] * h);
+        var xy = project(m, p[0] * m.w, p[1] * m.h);
         var d = Math.hypot(xy[0] - cx, xy[1] - cy);
         if (d < bestD) { bestD = d; best = layers[i]; }
       }
-      return bestD < 26 * (window.devicePixelRatio || 1) ? best : null;
+      /* A radius in overlay pixels, so the dot is as easy to grab at 4x as
+       * it is at 1x - it is the dot on screen you are aiming at, not an area
+       * of the figure. */
+      return bestD < 26 * m.dpr ? best : null;
     }
 
     function pos(e) {
@@ -816,19 +1424,81 @@
       return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr];
     }
 
+    function startPan(e) {
+      state.panning = {
+        x: e.clientX, y: e.clientY,
+        px: view.panX, py: view.panY
+      };
+      c.classList.add('grabbing');
+      e.preventDefault();
+    }
+
+    /* One overlay, four jobs, in this order. The pivot dots sit on top of
+     * the very pixels you want to drag, so the two that share a plain left
+     * button are separated by distance: within reach of a dot you are moving
+     * the joint, everywhere else you are moving the view. Nothing is taken
+     * away by that - the empty case did nothing at all before. */
     c.addEventListener('mousedown', function (e) {
+      /* The middle button always pans, for the times you want to push the
+       * figure while the pointer happens to be over a joint. */
+      if (e.button === 1) { startPan(e); return; }
+      if (e.button !== 0) return;
+
       var p = pos(e);
+
+      if (e.altKey && selectedLayer()) {
+        state.nudging = overlayToStage(p[0], p[1]);
+        e.preventDefault();
+        return;
+      }
+
       var L = nearestPivot(p[0], p[1]);
       if (L) {
         state.selected = L.id;
         state.dragging = true;
         buildLayerList();
+        buildLayerCard();
         buildMotionControls();
         e.preventDefault();
+        return;
       }
+
+      startPan(e);
     });
 
+    /* Back to the whole figure. The button in the transport does the same
+     * thing; this is the one you find without looking for it. */
+    c.addEventListener('dblclick', function () { resetView(); });
+
+    /* passive: false, or the browser scrolls the page and ignores the
+     * preventDefault. A trackpad pinch arrives here as a wheel event with
+     * ctrlKey set and a larger delta, which the same line handles. */
+    c.addEventListener('wheel', function (e) {
+      if (!state.figure) return;
+      e.preventDefault();
+      var p = pos(e);
+      /* Multiplicative, so a notch is worth the same fraction at every
+       * zoom. Adding a constant makes the far end crawl and the near end
+       * jump. */
+      zoomAt(view.zoom * Math.exp(-e.deltaY * 0.0015), p[0], p[1]);
+    }, { passive: false });
+
     window.addEventListener('mousemove', function (e) {
+      if (state.panning) {
+        view.panX = state.panning.px + (e.clientX - state.panning.x);
+        view.panY = state.panning.py + (e.clientY - state.panning.y);
+        applyView();
+        drawOverlay();
+        return;
+      }
+      if (state.nudging) {
+        var sel = selectedLayer();
+        if (!sel) return;
+        var now = overlayToStage(pos(e)[0], pos(e)[1]);
+        nudgeLayer(sel, now[0] - state.nudging[0], now[1] - state.nudging[1]);
+        state.nudging = now;
+        return;
+      }
       if (!state.dragging) return;
       var L = selectedLayer();
       if (!L) return;
@@ -845,7 +1515,14 @@
       buildLayerList();
     });
 
-    window.addEventListener('mouseup', function () { state.dragging = false; });
+    window.addEventListener('mouseup', function () {
+      state.dragging = false;
+      state.nudging = null;
+      if (state.panning) {
+        state.panning = null;
+        c.classList.remove('grabbing');
+      }
+    });
   }
 
   /* ================================================================== *
@@ -1519,8 +2196,155 @@
     if (window.console && console.error) console.error(msg, e);
   }
 
+  /* ================================================================== *
+   * The shell: two rails that fold, resize and trade sides
+   *
+   * Kept in localStorage, not in the figure. Which side someone wants their
+   * layers on is a property of the person, not of the character - a panel
+   * width in figure.json would turn up in the diff of every commit and mean
+   * nothing to anyone reading it.
+   * ================================================================== */
+
+  var LAYOUT_KEY = 'idle-studio-layout';
+  var RAIL_MIN = 220;
+  var RAIL_MAX = 620;
+
+  var layout = { left: 300, right: 360, swapped: false, showL: true, showR: true };
+
+  function clampRail(n, fallback) {
+    n = Math.round(Number(n));
+    if (!isFinite(n)) return fallback;
+    return Math.max(RAIL_MIN, Math.min(RAIL_MAX, n));
+  }
+
+  function readLayout() {
+    /* Any of this can throw or come back as junk: a private window, a value
+     * written by an older build, storage switched off entirely. None of that
+     * is worth a broken studio, so every field falls back on its own. */
+    try {
+      var raw = window.localStorage.getItem(LAYOUT_KEY);
+      if (!raw) return;
+      var j = JSON.parse(raw);
+      if (!j || typeof j !== 'object') return;
+      layout.left = clampRail(j.left, layout.left);
+      layout.right = clampRail(j.right, layout.right);
+      layout.swapped = !!j.swapped;
+      layout.showL = j.showL !== false;
+      layout.showR = j.showR !== false;
+    } catch (e) { /* keep the defaults */ }
+  }
+
+  function writeLayout() {
+    try {
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    } catch (e) { /* nothing to do about it, and nothing is lost */ }
+  }
+
+  function flag(el, name, on) {
+    if (on) el.classList.add(name); else el.classList.remove(name);
+  }
+
+  function applyLayout() {
+    var sh = $('shell');
+    sh.style.setProperty('--rail-l', layout.left + 'px');
+    sh.style.setProperty('--rail-r', layout.right + 'px');
+    flag(sh, 'swapped', layout.swapped);
+    flag(sh, 'no-l', !layout.showL);
+    flag(sh, 'no-r', !layout.showR);
+    $('toggleL').setAttribute('aria-pressed', String(layout.showL));
+    $('toggleR').setAttribute('aria-pressed', String(layout.showR));
+  }
+
+  function setRail(which, px) {
+    if (which === 'left') layout.left = clampRail(px, layout.left);
+    else layout.right = clampRail(px, layout.right);
+    applyLayout();
+    writeLayout();
+  }
+
+  function bindGrip(id, which) {
+    var g = $(id);
+    var startX = 0, startW = 0, sign = 1, live = false;
+
+    /* Which way the pointer has to travel to make a rail wider depends on
+     * which side that rail is currently on, and the swap moves it. Worked
+     * out once at mousedown rather than read on every move. */
+    function direction() {
+      return (which === 'left' ? 1 : -1) * (layout.swapped ? -1 : 1);
+    }
+
+    g.addEventListener('mousedown', function (e) {
+      live = true;
+      startX = e.clientX;
+      startW = (which === 'left') ? layout.left : layout.right;
+      sign = direction();
+      g.classList.add('on');
+      document.body.classList.add('dragging-rail');
+      /* Or the browser starts selecting the text either side of the grip. */
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', function (e) {
+      if (!live) return;
+      setRail(which, startW + (e.clientX - startX) * sign);
+    });
+
+    window.addEventListener('mouseup', function () {
+      if (!live) return;
+      live = false;
+      g.classList.remove('on');
+      document.body.classList.remove('dragging-rail');
+    });
+
+    /* A separator that can only be dragged is one that cannot be reached
+     * from the keyboard at all. */
+    g.addEventListener('keydown', function (e) {
+      var step = e.shiftKey ? 64 : 16;
+      var d = 0;
+      if (e.key === 'ArrowLeft') d = -step;
+      else if (e.key === 'ArrowRight') d = step;
+      else return;
+      e.preventDefault();
+      var now = (which === 'left') ? layout.left : layout.right;
+      setRail(which, now + d * direction());
+    });
+  }
+
+  function bindShell() {
+    readLayout();
+    applyLayout();
+
+    $('toggleL').addEventListener('click', function () {
+      layout.showL = !layout.showL;
+      applyLayout();
+      writeLayout();
+    });
+    $('toggleR').addEventListener('click', function () {
+      layout.showR = !layout.showR;
+      applyLayout();
+      writeLayout();
+    });
+    $('swapBtn').addEventListener('click', function () {
+      layout.swapped = !layout.swapped;
+      applyLayout();
+      writeLayout();
+    });
+
+    bindGrip('gripL', 'left');
+    bindGrip('gripR', 'right');
+
+    /* Folding, dragging and the window all change the same thing - how much
+     * room the stage has - so one observer answers for all three instead of
+     * three call sites that have to remember. */
+    if (window.ResizeObserver) {
+      new ResizeObserver(refitStage).observe($('stage').parentNode);
+    }
+  }
+
   function boot() {
+    bindShell();
     bindPivotDrag();
+    bindNudgeKeys();
 
     /* Pointer tracking is bound once, to the overlay, and forwarded to
      * whichever figure is mounted. Calling figure.trackPointer() on every
@@ -1626,6 +2450,8 @@
       loadFigure(this.value).catch(showError);
     });
 
+    $('zoomFit').addEventListener('click', resetView);
+
     $('sheetBtn').addEventListener('click', buildSheet);
 
     $('eventsBtn').addEventListener('click', renderEvents);
@@ -1661,6 +2487,48 @@
       $('jsonOut').value = JSON.stringify(state.figure, null, 2);
     });
 
+    /* The way out when a knob is missing. Everything the panel offers is
+     * guarded field by field; typed JSON goes around all of it, so the same
+     * guard has to stand here too - and a parent loop is the one mistake the
+     * player cannot survive, because it walks the chain on every frame. */
+    $('jsonApply').addEventListener('click', function () {
+      var msg = $('jsonMsg');
+      var txt = $('jsonOut').value;
+      /* Without a figure there is no base URL, so every src would resolve
+       * against the studio's own folder and load nothing. */
+      if (!state.figure) {
+        msg.textContent = 'Load or create a figure first.';
+        return;
+      }
+      if (!txt.replace(/\s/g, '')) {
+        msg.textContent = 'The box is empty. Press "Show current" first.';
+        return;
+      }
+
+      var fig;
+      try {
+        fig = JSON.parse(txt);
+      } catch (e) {
+        msg.textContent = 'Refused, not JSON: ' + ((e && e.message) || e);
+        return;
+      }
+
+      var bad = figureTrouble(fig);
+      if (bad) {
+        msg.textContent = 'Refused: ' + bad + '. Nothing changed.';
+        return;
+      }
+
+      msg.textContent = 'Applied. Not saved - press Save for that.';
+      mountFigure(state.name, fig, state.base, true)
+        .catch(function (e) {
+          /* The figure is mounted either way; this is only about the images
+           * the canvas work needs, so say which one and carry on. */
+          msg.textContent = 'Applied, but an image is missing: ' +
+                            ((e && e.message) || e);
+        });
+    });
+
     $('jsonCopy').addEventListener('click', function () {
       var ta = $('jsonOut');
       if (!ta.value) ta.value = JSON.stringify(state.figure, null, 2);
@@ -1671,11 +2539,7 @@
       setTimeout(function () { self.textContent = 'Copy'; }, 1200);
     });
 
-    window.addEventListener('resize', function () {
-      if (state.fig) state.fig.fit();
-      sizeOverlay();
-      drawOverlay();
-    });
+    window.addEventListener('resize', refitStage);
 
     $('newFigureBtn').addEventListener('click', createFigure);
     $('newName').addEventListener('keydown', function (e) {

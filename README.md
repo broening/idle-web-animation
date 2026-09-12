@@ -42,7 +42,8 @@ player/
   idle.css     the layout contract - a figure is a stack of full-canvas images
 studio/
   index.html   authoring and checking surface
-  studio.js    pivot dragging, sliders, contact sheet, events, export, IoU
+  studio.js    pivot dragging, the layer and motion cards, contact sheet,
+               events, export, IoU
 tools/
   serve.py              the studio's dev server - reads like http.server, writes
   import-layers.py      a folder of already-cut layers -> a rigged figure
@@ -124,6 +125,37 @@ file name knows the pose. On a figure aiming a rifle, for instance, the head
 and the weapon have to carry the same motion and sit at the same depth in the
 chain, or the mask leaves the sights — measured on `grim`, matching them holds
 the cheek weld to 0.49 px over the whole window.
+
+### Rigging it, without editing the file
+
+Three columns: the layers on the left, the figure in the middle, its settings
+on the right. Both rails fold away with the two buttons at the top right, both
+can be dragged wider by the line beside them (arrow keys work too), and the
+button between them trades their sides for anyone who reads a rig the other
+way round. The widths are remembered per browser, not in `figure.json`.
+
+On the stage itself the wheel zooms towards the pointer, dragging anywhere
+that is not a pivot dot pushes the figure about, and **Fit** or a double-click
+puts it back. That view is a magnifying glass and nothing else: it is not
+saved, and the contact sheet, the events scan and the export all render from
+the figure data at their own fixed size.
+
+Everything a rig is made of is in those cards, so the file does not have to be
+opened to build one.
+
+- **Layer card** — `parent`, `role`, `blend`, `opacity`, `alt` for whichever
+  layer is selected. The `parent` list leaves out every layer that already
+  hangs below this one, so the chain cannot be closed into a loop. It also
+  says when a `blink` has no eye role to drive, and the other way round.
+- **Motion card** — add or remove a motion block. Each of the eight types once
+  per layer: two blinks on one layer read the same clock and fire as one, and
+  two drifts make the layer jump between rises.
+- **JSON card** — **Apply** reads the box back into the figure, for the rare
+  thing no knob covers. Bad JSON, a parent that is not a layer, a parent loop
+  and a duplicate id are refused and nothing changes.
+
+Nothing in the panel touches the disk. **Save** does that, and Reset throws
+the lot away.
 
 ### After you repaint a layer
 

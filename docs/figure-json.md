@@ -61,6 +61,31 @@ keyframes.
 `name` and `note` at the top level are for people. The player never reads
 them; the studio takes a figure's name from its folder.
 
+### Which of these the studio writes for you
+
+This file rarely needs an editor. In the studio:
+
+| Field | Where |
+|---|---|
+| `parent`, `role`, `blend`, `opacity`, `alt` | the **Layer card** |
+| `pivot`, `offset` | dragged on the stage |
+| the array order | dragged in the layer list |
+| `motions`, and every number in them | the **Motion card**, which also adds and removes whole blocks |
+| `depth`, `lag`, `motion.parallax`, `motion.followSeconds` | sliders |
+
+Two things the Layer card refuses on purpose. The `parent` list leaves out
+every layer that already hangs below the selected one, because a loop in the
+chain freezes the tab — the engine walks the chain on every frame. And the
+`blend` list stops at the modes canvas can reproduce, so `plus-darker` is not
+offered: it is the one value that would make the contact sheet disagree with
+the page.
+
+What is **not** in the panel: creating, deleting or renaming a layer, and the
+`frames` list. Those still want the file, or `tools/import-layers.py`. The
+JSON card's **Apply** button is the way in — it reads the box back into the
+figure and refuses bad JSON, a parent that is not a layer, a parent loop and a
+duplicate id. Nothing is written to disk until **Save**.
+
 Layers are listed **back to front**. The studio shows them the other way
 round, the way a layer palette does.
 

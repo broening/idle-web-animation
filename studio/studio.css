@@ -28,11 +28,154 @@ html, body {
   font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
+/* ---------------- shell ----------------
+ *
+ * One bar across the top, then three columns: the layers, the figure, its
+ * settings. Both rails fold away and both can be dragged wider, and the two
+ * of them can trade sides - a rig is read left to right by some people and
+ * right to left by others, and neither is worth arguing about.
+ *
+ * The widths live in two custom properties on .shell so the drag, the fold and
+ * the swap all write to the same two numbers. */
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
 }
+
+.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-size: 12px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-weight: 600;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.topbar .state {
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32ch;
+}
+
+.spacer { flex: 1 1 auto; }
+
+.btn.icon {
+  padding: 6px 9px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-2);
+}
+
+/* Shown = lit, hidden = plain. Deliberately not opacity: dimming --ink-2 to
+ * 0.45 on this background lands around 2.5:1, which is a state you cannot
+ * read rather than a state that is switched off. */
+.btn.icon[aria-pressed="true"] { color: var(--accent); border-color: var(--line); }
+
+.shell {
+  --rail-l: 300px;
+  --rail-r: 360px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* The whole reason the rails carry no side border of their own: reversing
+ * the row would otherwise leave both borders on the wrong edge. */
+.shell.swapped { flex-direction: row-reverse; }
+
+.rail {
+  flex: 0 0 auto;
+  min-width: 0;
+  background: var(--bg-2);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 40px;
+}
+
+.rail-l { width: var(--rail-l); }
+.rail-r { width: var(--rail-r); }
+
+/* Folded away, not unmounted: the layer list keeps its scroll position and
+ * the open cards stay open. */
+.shell.no-l .rail-l,
+.shell.no-l #gripL,
+.shell.no-r .rail-r,
+.shell.no-r #gripR { display: none; }
+
+.rail-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px 8px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-head h2 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.count {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A 6px column that behaves like a 10px one, because a hit area the width of
+ * the line you can see is a line you keep missing. */
+.grip {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--line);
+  position: relative;
+}
+
+.grip::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  right: -2px;
+}
+
+.grip:hover,
+.grip:focus,
+.grip.on { background: var(--accent); }
+
+.grip:focus { outline: none; }
+
+/* While a rail is being dragged nothing else may take the pointer, or the
+ * stage swallows the move the moment the cursor crosses it. */
+.dragging-rail,
+.dragging-rail * { cursor: col-resize !important; user-select: none; }
 
 /* ---------------- stage ---------------- */
 
@@ -100,47 +243,76 @@ html, body {
   cursor: pointer;
 }
 
-/* ---------------- panel ---------------- */
-
-.panel {
-  flex: 0 0 380px;
-  background: var(--bg-2);
-  border-left: 1px solid var(--line);
-  overflow-y: auto;
-  padding: 0 0 40px;
-}
-
-.panel-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
-  padding: 14px 16px;
-}
-
-.panel-head h1 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-  font-weight: 600;
-}
-
+/* ---------------- cards ----------------
+ *
+ * Every card is a <details>, so folding one costs no script and keeps working
+ * from the keyboard. Layer and Motion ship open; the four that are occasional
+ * work ship shut, which is what turns a column you scroll into a column you
+ * read. */
 .card {
-  padding: 16px;
   border-bottom: 1px solid var(--line);
 }
 
-.card h2 {
-  margin: 0 0 6px;
+.card > summary {
+  padding: 12px 14px;
   font-size: 13px;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--accent);
   font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+
+.card > summary::-webkit-details-marker { display: none; }
+
+/* The triangle is drawn rather than inherited, so it turns the same way in
+ * every engine and can sit on the correct side of the label. */
+.card > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.card[open] > summary::before { transform: rotate(90deg); }
+
+.card > summary:hover { background: var(--bg-3); }
+
+.card > *:not(summary) { margin-left: 14px; margin-right: 14px; }
+
+.card > *:last-child { margin-bottom: 14px; }
+
+/* A fold inside a card, for the paragraphs that explain a thing you only need
+ * explained once. Nothing is deleted; it is just not in the way. */
+.note {
+  margin-top: 8px;
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
+.note > summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 11px;
+  list-style: none;
+}
+
+.note > summary::-webkit-details-marker { display: none; }
+.note > summary::before { content: "+ "; }
+.note[open] > summary::before { content: "\2212 "; }
+.note > summary:hover { color: var(--accent); }
+.note > .hint:first-of-type { margin-top: 8px; }
+.note > .hint:last-child { margin-bottom: 0; }
+
+.rail > .note,
+.rail > .out { margin: 10px 14px 0; }
 
 .hint {
   margin: 0 0 10px;
@@ -206,10 +378,15 @@ html, body {
 
 /* ---------------- layer list ---------------- */
 
+/* The list is the one thing in the rail that is allowed to grow, so a rig of
+ * 35 layers scrolls on its own and the notes below it stay reachable. */
 .layers {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 8px 10px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
 }
 
 .layers li {
@@ -229,18 +406,35 @@ html, body {
   border-color: var(--accent);
 }
 
-.layers .nm { flex: 1 1 auto; min-width: 0; }
+/* A row is one line high, always. Left to itself the pivot pair wrapped and
+ * took the row to 55 px, so a list of 22 layers came out a third longer than
+ * it needed to be and no two rows were the same height. The name is the only
+ * part allowed to lose characters, because it is the only one you can still
+ * read from its position in the list. */
+.layers .nm {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .layers .tags {
   color: var(--ink-2);
   font-size: 11px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11ch;
+  flex: 0 1 auto;
 }
 
 .layers .pv {
   color: var(--ink-2);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 /* ---------------- sliders ---------------- */
@@ -258,6 +452,9 @@ html, body {
   font-size: 12px;
   color: var(--ink);
   font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .ctl .grp h3 span {
@@ -286,6 +483,43 @@ html, body {
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
+
+/* ---------------- layer fields ---------------- */
+
+/* A dropdown or a text box on the slider's own grid, so the panel reads as
+ * one column of labelled fields whatever the control happens to be. The
+ * third slider column is for a number, and a select has none, so a field
+ * spans it. */
+.field {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.field .sel,
+.field .txt { padding: 5px 7px; font-size: 12px; }
+
+/* Remove-a-motion. Sits at the right end of the block's own heading, where
+ * it cannot be mistaken for something that removes the layer. */
+.ctl .grp h3 .x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.ctl .grp h3 .x:hover { background: var(--bg-2); color: var(--bad); }
+
+.ctl .grp .row { margin: 0; }
 
 /* ---------------- output ---------------- */
 
@@ -471,3 +705,91 @@ html, body {
 .btn.file input:disabled { cursor: not-allowed; }
 
 .out { white-space: pre-wrap; }
+
+/* A name field in a toolbar must not grow to fill the bar. */
+.txt.narrow { flex: 0 0 auto; width: 150px; }
+
+/* ---------------- narrow screens ----------------
+ *
+ * Three columns need width to be worth having. Below this the rails go under
+ * the stage and run full width, which is a worse tool than the wide layout
+ * and a much better one than three squeezed columns. The stage keeps a fixed
+ * share of the height so it is still the thing you are looking at.
+ */
+@media (max-width: 1000px) {
+  .shell,
+  .shell.swapped {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .rail-l,
+  .rail-r {
+    width: 100%;
+    flex: 0 0 auto;
+    border-top: 1px solid var(--line);
+    padding-bottom: 0;
+  }
+
+  /* The figure goes first when there is only one column. It is the thing
+   * being judged; a list of layer names above it is not. */
+  .stage-col {
+    flex: 0 0 auto;
+    height: 55vh;
+    min-height: 320px;
+    order: 1;
+  }
+
+  .rail-l { order: 2; }
+  .rail-r { order: 3; }
+
+  .layers { max-height: 40vh; }
+
+  /* Dragging a width is meaningless when there is only one column. */
+  .grip { display: none; }
+}
+
+/* Someone who has asked for less movement gets none of the fold animation. */
+@media (prefers-reduced-motion: reduce) {
+  .card > summary::before { transition: none; }
+}
+
+/* A finger is not a mouse pointer. Only where the input actually is one, so
+ * the desktop toolbar keeps its density. */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn.icon { min-width: 44px; }
+  .sw { width: 30px; height: 30px; }
+  .layers li { padding: 10px 8px; }
+}
+
+/* The toolbar carries three unrelated jobs - which figure, making one, saving
+ * one - and read as one flat row of eight controls. A hairline is enough to
+ * turn that into three groups the eye can skip between. */
+.sep {
+  flex: 0 0 auto;
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+  background: var(--line);
+}
+
+/* ---------------- view ---------------- */
+
+/* The pointer says which of the overlay's jobs is running. Crosshair is the
+ * resting state because the joints are what you aim at most. */
+.overlay.grabbing { cursor: grabbing; }
+
+.zoomctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoomval {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  font-size: 12px;
+  min-width: 48px;
+  text-align: right;
+}

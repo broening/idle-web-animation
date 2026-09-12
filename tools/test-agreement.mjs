@@ -139,6 +139,99 @@ for (const name of ['breathe', 'sway', 'blink', 'gaze', 'flipbook', 'glow', 'cha
   checks += read.size + listed.size;
 }
 
+/* --- 6b. every parameter the studio offers must have a usable range ------
+ *
+ * drift shipped without one. The fallback range is 0..10, so the slider for
+ * its default dy of -120 could not reach the value it was showing: a block
+ * you could add and not steer. A missing entry is now a failure, and so is a
+ * default that falls outside its own slider. */
+
+const rangesBlock = studio.slice(studio.indexOf('var RANGES = {'),
+                                 studio.indexOf('function slider'));
+const RANGES = new Function(rangesBlock + '\nreturn RANGES;')();
+const MP = new Function(paramsBlock + '\nreturn MOTION_PARAMS;')();
+
+/* The four the panel writes outside a motion block. */
+const extraKeys = ['depth', 'lag', 'parallax', 'opacity'];
+
+for (const type of Object.keys(MP)) {
+  for (const [key, def] of Object.entries(MP[type])) {
+    const r = RANGES[key];
+    if (!r) fail(`${type}.${key} hat keinen Eintrag in RANGES - der Regler liefe auf 0..10`);
+    const [lo, hi, step] = r;
+    if (!(lo < hi)) fail(`RANGES.${key}: ${lo} ist nicht kleiner als ${hi}`);
+    if (!(step > 0)) fail(`RANGES.${key}: Schrittweite ${step} ist nicht groesser als 0`);
+    if (def < lo || def > hi) {
+      fail(`${type}.${key}: Standardwert ${def} liegt ausserhalb des Reglers ${lo}..${hi}`);
+    }
+    checks += 4;
+  }
+}
+for (const key of extraKeys) {
+  if (!RANGES[key]) fail(`RANGES fehlt "${key}", das die Karte "Layer" oder "figure" schreibt`);
+  checks++;
+}
+console.log(`Reglerbereiche: ${checks} Pruefungen bis hierhin, jeder Standardwert erreichbar.`);
+
+/* --- 6c. the parent-chain guard ------------------------------------------
+ *
+ * A ring in `parent` freezes the tab: chainDepth() walks the chain on every
+ * frame. The studio keeps one out by hand - the dropdown hides everything
+ * below the layer - and refuses one that arrives through the JSON box. Both
+ * come from the functions below, so they are lifted out of studio.js and run
+ * here rather than trusted. */
+
+const guardSrc = studio.slice(studio.indexOf('function descendantIds'),
+                              studio.indexOf('/* end of the parent-chain guard */'));
+const guard = new Function(guardSrc +
+  '\nreturn { descendantIds, cycleTrouble, figureTrouble };')();
+
+const L = (id, parent) => ({ id, src: id + '.webp', parent });
+const kette = [L('a'), L('b', 'a'), L('c', 'b')];
+
+const unten = guard.descendantIds(kette, 'a');
+for (const id of ['a', 'b', 'c']) {
+  if (!unten[id]) fail(`descendantIds: "${id}" haengt unter "a" und fehlt`);
+  checks++;
+}
+const untenC = guard.descendantIds(kette, 'c');
+if (untenC.a || untenC.b) fail('descendantIds: "c" hat weder a noch b unter sich');
+checks++;
+
+if (guard.cycleTrouble(kette) !== null) fail('cycleTrouble meldet einen Fehler in einer sauberen Kette');
+checks++;
+
+const ring = [L('a', 'c'), L('b', 'a'), L('c', 'b')];
+const ringMsg = guard.cycleTrouble(ring);
+if (!ringMsg || !/loop/.test(ringMsg)) fail(`cycleTrouble erkennt den Ring a->b->c->a nicht: ${ringMsg}`);
+checks++;
+
+/* The set has to close on a figure that already contains a ring, or the
+ * dropdown itself hangs the moment such a figure is applied. */
+const ringUnten = guard.descendantIds(ring, 'a');
+if (!(ringUnten.a && ringUnten.b && ringUnten.c)) fail('descendantIds haelt einen Ring nicht aus');
+checks++;
+
+const fehlt = guard.cycleTrouble([L('a', 'gibtsnicht')]);
+if (!fehlt || !/not a layer/.test(fehlt)) fail(`cycleTrouble erkennt einen fehlenden Elternteil nicht: ${fehlt}`);
+checks++;
+
+const gut = { layers: kette };
+if (guard.figureTrouble(gut) !== null) fail('figureTrouble lehnt eine saubere Figur ab');
+checks++;
+for (const [fig, muster] of [
+  [{ layers: [L('a'), L('a')] }, /share the id/],
+  [{ layers: [{ id: 'a' }] }, /neither src nor frames/],
+  [{ layers: [] }, /at least one layer/],
+  [{ layers: kette.concat([L('d', 'e')]) }, /not a layer/],
+  ['nein', /object/]
+]) {
+  const msg = guard.figureTrouble(fig);
+  if (!msg || !muster.test(msg)) fail(`figureTrouble: erwartet ${muster}, bekommen ${msg}`);
+  checks++;
+}
+console.log(`Elternkette: Ring, fehlender Elternteil und doppelte id werden abgewiesen.`);
+
 /* --- 7. hostile input must not crash, hang or split the renderers -------- */
 
 const F = (layers, extra) => Object.assign(
