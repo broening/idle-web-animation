@@ -1385,7 +1385,10 @@
   var BLENDS = ['normal', 'screen', 'multiply', 'overlay',
                 'darken', 'lighten', 'difference', 'plus-lighter'];
 
-  var ROLES = ['eyesOpen', 'eyesClosed'];
+  /* The mouth pair only ever switches from a live input (ctx.mouth, which a
+   * camera page sets); on the stage here the closed one shows and the open
+   * one stays hidden, which is what a figure nobody talks through looks like. */
+  var ROLES = ['eyesOpen', 'eyesClosed', 'mouthOpen', 'mouthClosed'];
 
   function grp(title, sub) {
     var g = document.createElement('div');

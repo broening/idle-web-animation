@@ -55,9 +55,9 @@ keyframes.
 | `depth` | 0…1, back to front. Drives parallax only. |
 | `offset` | `[x, y]` in canvas pixels, a standing correction for a part that was cut a few pixels off. Children inherit it; the pivot does not move with it. Alt-drag it on the stage, or nudge it with the arrow keys. Leave it out when it is `[0, 0]`. |
 | `tilt` | Degrees, a standing rotation about the pivot on top of whatever the motions turn. Children inherit it, like `offset`. Mostly useful in a mood; leave it out when it is 0. |
-| `hidden` | `true` leaves the layer out of the picture in both renderers. It wins over the eye roles: a hidden `eyesClosed` layer stays hidden mid-blink. A mood can set it back to `false`. |
+| `hidden` | `true` leaves the layer out of the picture in both renderers. It wins over the eye and mouth roles: a hidden `eyesClosed` layer stays hidden mid-blink, a hidden `mouthOpen` layer stays hidden while the mouth is open. A mood can set it back to `false`. |
 | `lag` | Extra seconds of delay on top of the chain lag. |
-| `role` | `"eyesOpen"` marks the layer a `blink` hides. The `blink` motion may sit on this layer or on any ancestor. |
+| `role` | `"eyesOpen"` marks the layer a `blink` hides, `"eyesClosed"` the one it shows. The `blink` motion may sit on this layer or on any ancestor. `"mouthOpen"` shows only while the mouth input is above 0.5, `"mouthClosed"` only at 0.5 and below. See [Blinking properly](#blinking-properly) and [Live input](#live-input-blink-and-mouth). |
 | `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |
 | `alt` | Alt text for the `<img>`. Cosmetic, but free. |
 | `opacity` | Base opacity, clamped to 0…1. Out-of-range values used to make the DOM layer invisible and the canvas layer opaque — two different results from one file. |
@@ -197,6 +197,9 @@ hole where an eye should be. Give the figure both roles:
 The head carries the head's own motion; the eyes ride it through `parent` and
 must not have a `gaze` of their own, or they drift off the face.
 
+A page with a camera can close the lids itself instead of the schedule; see
+[Live input](#live-input-blink-and-mouth).
+
 ### A face with no eyelids
 
 A mask, a helmet, a skull. The two roles still work — what changes is what
@@ -321,6 +324,63 @@ An unknown name, or none, is neutral. A renderer of your own asks
 `Idle.imageOf(layer, solvedLayer, data)` which picture shows and where, and
 `Idle.imagesOf(layer, data)` for every picture to load up front, the way both
 built-in renderers do.
+
+## Live input: blink and mouth
+
+A page that watches a face through a camera can move the lids and the mouth
+directly. Two numbers from 0 to 1 arrive through `ctx`, like the pointer:
+
+| `ctx` | player field | 0 | 1 | not given |
+|---|---|---|---|---|
+| `blink` | `figure.blink` | lids up | lids down | the figure's own blink schedule |
+| `mouth` | `figure.mouth` | closed | open | closed |
+
+```js
+figure.blink = 0.9;         // the person's eyes are shut
+figure.mouth = 1;           // and the mouth is open
+figure.blink = undefined;   // the tracker lost the face: back to the schedule
+Idle.solve(data, t, { blink: 1, mouth: 0 });
+Idle.drawFrame(g, data, images, t, { ctx: { blink: 1, mouth: 0 } });
+```
+
+Both fields start `undefined`, and a figure nobody sets them on behaves
+exactly as it did before they existed. Values outside 0 to 1 are clamped.
+Anything that is not a finite number - `null`, `NaN`, a string like `"1"` -
+counts as not given.
+
+**`blink`** replaces the amount of every `blink` motion in the figure,
+wherever it sits, so the eye roles follow it the way they follow the
+schedule: above 0.5 `eyesOpen` is hidden and `eyesClosed` shows, at 0.5 and
+below the other way round. While it is set the schedule stops completely,
+and so does the small widening before a blink; that widening is the figure
+guessing a blink is coming, and with a real eye on the other end there is
+nothing to guess. A figure with no `blink` motion at all does not blink from
+the camera either: the input drives blink motions, and the roles read those.
+
+**`mouth`** drives two roles and nothing else. No motion reads it.
+
+| role | shown |
+|---|---|
+| `mouthOpen` | while `mouth` is above 0.5 |
+| `mouthClosed` | while `mouth` is 0.5 or below, and when it is not given |
+
+Draw both as full-canvas layers, parented to the head, and cut the mouth out
+of the head layer the way the eyes are cut out, or the painted mouth shows
+through the open one. `hidden: true`, on the layer or from a mood, wins over
+both roles.
+
+**Smoothing belongs to the page.** `solve()` has one threshold and remembers
+nothing, because it is a pure function of its arguments. A camera's mouth
+value that hovers around 0.5 would flip the picture every frame. Holding it
+steady takes two thresholds - the OBS avatar page opens above 0.35 of
+MediaPipe's `jawOpen` and closes again below 0.25 - and the answer from the
+frame before, which is state. The page reading the camera
+keeps that state and hands the figure a clean 0 or 1.
+
+**Moods can swap the mouth.** A mood gives either mouth layer another `src`
+like any other layer, a pout for `sad`, a grin for `happy`. A mood lists only
+what differs, so one that swaps only the `mouthClosed` picture keeps neutral's
+open mouth when the person speaks. Swap both when the open mouth has to match.
 
 ## Blend modes, and why effects are cheap
 

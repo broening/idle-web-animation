@@ -354,6 +354,10 @@ of them, and never depends on anything in this folder.
 - **OBS figure page** (`addons/obs/figure.html`) - a transparent page for an
   OBS Studio Browser Source: drop a figure into a scene, and its mood can
   follow the scene name. See `addons/obs/README.md` for setup.
+- **OBS camera avatar** (`addons/obs/avatar.html`) - the same figure page,
+  driven by a webcam through MediaPipe Face Landmarker: it looks where you
+  look, blinks when you blink, and can smile into a `happy` mood. See
+  "Avatar with camera" in `addons/obs/README.md`.
 
 ## Build it with an AI agent
 

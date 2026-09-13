@@ -264,6 +264,62 @@ for (const [label, fig, to] of [
   stateChecks += blend.length + 1;
 }
 
+/* --- live face input -----------------------------------------------------
+ *
+ * ctx.blink and ctx.mouth come from a camera and change every frame. The
+ * answer for one (t, ctx) still must not: same inputs, same frame, with
+ * other faces solved in between. ctx is frozen, so a solve that wrote into it
+ * would throw here in strict mode instead of passing quietly. */
+
+const faceFig = {
+  name: 'face',
+  size: { width: 1000, height: 1000 },
+  motion: { followSeconds: 0.085, parallax: 0.4, stateSeconds: 0.4 },
+  layers: [
+    { id: 'kopf', src: 'kopf.webp', pivot: [0.5, 0.6], depth: 0.45,
+      motions: [{ type: 'gaze' }, { type: 'blink' }] },
+    { id: 'auf', src: 'auf.webp', parent: 'kopf', role: 'eyesOpen', pivot: [0.5, 0.4],
+      motions: [{ type: 'blink' }] },
+    { id: 'zu', src: 'zu.webp', parent: 'kopf', role: 'eyesClosed', pivot: [0.5, 0.4] },
+    { id: 'mund-auf', src: 'mund-auf.webp', parent: 'kopf', role: 'mouthOpen', pivot: [0.5, 0.7] },
+    { id: 'mund-zu', src: 'mund-zu.webp', parent: 'kopf', role: 'mouthClosed', pivot: [0.5, 0.7],
+      motions: [{ type: 'blink' }] }
+  ],
+  states: {
+    grin: { 'mund-zu': { src: 'mund-zu-grin.webp' }, kopf: { tilt: 2 } },
+    stumm: { 'mund-auf': { hidden: true } }
+  }
+};
+const FACE_INPUTS = [
+  {}, { blink: 0 }, { blink: 1 }, { blink: 0.37, mouth: 0.8 }, { mouth: 0.5 }, { mouth: 0.51 },
+  { blink: NaN, mouth: 'open' }, { blink: -4, mouth: 9 }, { blink: undefined, mouth: undefined }
+];
+let faceChecks = 0, faceDiffers = 0;
+for (const t of TIMES) {
+  for (const input of FACE_INPUTS) {
+    for (const state of [undefined, 'grin', { from: 'grin', to: 'stumm', since: t - 0.1 }]) {
+      const ctx = Object.freeze(Object.assign({ pointerX: 0.2, pointerY: -0.3, state }, input));
+      const a = JSON.stringify(Idle.solve(faceFig, t, ctx));
+      Idle.solve(faceFig, t, { blink: 1, mouth: 1, state: 'stumm' });
+      Idle.solve(faceFig, t + 0.07, { blink: 0.2, mouth: 0 });
+      Idle.solve(synthetic, t, { blink: 0.9, mouth: 0.9 });
+      const b = JSON.stringify(Idle.solve(faceFig, t, ctx));
+      if (a !== b) fail(`face mit ${JSON.stringify(input)} state=${JSON.stringify(state)} bei t=${t} nicht stabil`);
+      for (const s of JSON.parse(a)) {
+        if (!s.matrix.every(Number.isFinite) || !Number.isFinite(s.opacity) || !Number.isFinite(s.blink)) {
+          fail(`face mit ${JSON.stringify(input)} bei t=${t}: Ebene ${s.id} hat NaN`);
+        }
+      }
+      if (a !== JSON.stringify(Idle.solve(faceFig, t, { pointerX: 0.2, pointerY: -0.3, state }))) faceDiffers++;
+      faceChecks++;
+    }
+  }
+}
+/* The inputs must actually reach the figure, or all of the above is a
+ * frozen face passing a purity test. */
+if (faceDiffers === 0) fail('face: blink und mouth aendern nie etwas - die Eingabe kommt nicht an');
+stateChecks += faceChecks;
+
 checks += stateChecks;
 console.log(`${checks} Vergleiche, alle stabil, Bewegung vorhanden.`);
 console.log('DETERMINISTISCH');
