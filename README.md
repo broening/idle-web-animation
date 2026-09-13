@@ -357,7 +357,7 @@ of them, and never depends on anything in this folder.
 - **OBS camera avatar** (`addons/obs/avatar.html`) - the same figure page,
   driven by a webcam through MediaPipe Face Landmarker: it looks where you
   look, blinks when you blink, and can smile into a `happy` mood. See
-  "Avatar with camera" in `addons/obs/README.md`.
+  "Part B: avatar with camera" in `addons/obs/README.md`.
 
 ## Build it with an AI agent
 
