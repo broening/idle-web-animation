@@ -10,7 +10,28 @@
   "motion": {
     "windowSeconds": 16,
     "followSeconds": 0.665,
-    "parallax": 0.3
+    "parallax": 0.3,
+    "stateSeconds": 0.4
+  },
+  "states": {
+    "sad": {
+      "kopf": { "offset": [0, 5], "tilt": -2.5 },
+      "torso": { "breathe": { "period": 4.9 } },
+      "poncho-schulter": { "sway": { "strength": 0.28 } },
+      "poncho-back": { "sway": { "strength": 0.28 } },
+      "poncho-front": { "sway": { "strength": 0.28 } },
+      "rechter-arm": { "sway": { "strength": 0.7 } },
+      "linker-arm": { "sway": { "strength": 0.7 } }
+    },
+    "happy": {
+      "kopf": { "offset": [0, -3] },
+      "torso": { "breathe": { "period": 3.4, "strength": 1.2 } },
+      "poncho-schulter": { "sway": { "strength": 0.55 } },
+      "poncho-back": { "sway": { "strength": 0.55 } },
+      "poncho-front": { "sway": { "strength": 0.55 } },
+      "rechter-arm": { "sway": { "strength": 1.15 } },
+      "linker-arm": { "sway": { "strength": 1.15 } }
+    }
   },
   "layers": [
     {
