@@ -17,6 +17,10 @@ enforces and what it does not; do not claim more than it does.
 3. Chromium 103 is the floor, for the player and for the studio.
    `tools/check-compat.py` refuses newer syntax.
 
+`addons/` is the one exception to rule 2: it is optional (the core builds and
+runs a figure without it) and may load code from a CDN - the core under
+`player/`, `studio/` and `tools/` never does.
+
 ## What you can do from a shell
 
 | Job | How |
@@ -136,6 +140,7 @@ moves.
 ```
 node tools/test-determinism.mjs    ->  DETERMINISTISCH
 node tools/test-agreement.mjs      ->  EINIG
+node tools/test-addons.mjs         ->  ADDONS-OK
 python tools/check-compat.py       ->  CHROMIUM-103-TAUGLICH
 ```
 

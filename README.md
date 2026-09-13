@@ -345,6 +345,16 @@ folder next to `player/idle.js`, and mount it:
 </script>
 ```
 
+## Addons
+
+`addons/` holds optional extras built on top of the core player - the core
+under `player/`, `studio/` and `tools/` builds and runs a figure without any
+of them, and never depends on anything in this folder.
+
+- **OBS figure page** (`addons/obs/figure.html`) - a transparent page for an
+  OBS Studio Browser Source: drop a figure into a scene, and its mood can
+  follow the scene name. See `addons/obs/README.md` for setup.
+
 ## Build it with an AI agent
 
 Everything a figure is made of is text and commands, so the AI in your editor
