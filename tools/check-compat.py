@@ -25,9 +25,13 @@ TARGETS = [
     "studio/index.html",
     "addons/obs/figure.html",
     "addons/obs/scene.js",
+    "addons/obs/face.js",
     # addons/obs/avatar.html is deliberately NOT in this list: it loads
     # MediaPipe and needs OBS 31+ / Chromium 127, well above the floor this
-    # check enforces for everything else. See addons/obs/README.md.
+    # check enforces for everything else. See addons/obs/README.md. face.js
+    # sits right next to it but stays in TARGETS on purpose - it is pure
+    # decision logic with no CDN of its own (avatar.html does the fetching),
+    # so it has no reason to need anything newer than the rest of addons/.
 ]
 
 # pattern, first Chrome version that has it, what to use instead

@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OBS avatar</title>
+<link rel="stylesheet" href="../../player/idle.css">
+<style>
+  /* Same posture as figure.html: an OBS Browser Source paints straight onto
+     the scene, so the whole page is transparent and fills whatever box the
+     source is given. See figure.html for the long version of this comment. */
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+  #host {
+    position: absolute;
+    inset: 0;
+  }
+  /* Built and shown only under ?debug=1 - see buildDebugOverlay() below.
+   * Never part of the page otherwise, which is what keeps the default page
+   * honest: nothing but the figure, ever. */
+  #idleFaceDebug {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.72);
+    color: #d6ffe0;
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+    padding: 6px 8px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    pointer-events: none;
+    max-width: 220px;
+  }
+  #idleFaceDebug video {
+    display: block;
+    width: 160px;
+    height: 120px;
+    margin-bottom: 4px;
+    background: #111;
+    /* Un-mirrored on purpose: this is the raw frame the tracking sees. If
+     * the figure's turn direction is judged against this preview (the brief
+     * asks for it to match "your camera preview image"), mirroring it here
+     * as well would make every sign look right regardless of whether
+     * ?mirror=0 is actually needed. */
+  }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script src="../../player/idle.js"></script>
+<script src="./scene.js"></script>
+<script src="./face.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var host = document.getElementById('host');
+
+  /* Every query value is untrusted input, the same posture as figure.html:
+   * OBS lets anyone editing the scene type whatever they like into the
+   * Browser Source URL, so each value is checked before it is trusted and
+   * every fallback is silent - a typo must never crash the page or leak
+   * text onto the stream. IdleObs.params() only knows about figure/state/bg
+   * (it is figure.html's file, shared read-only here), so the two params
+   * this page adds of its own - mirror and debug - are read straight off
+   * the URL instead of extending that file. */
+  var qs;
+  try {
+    qs = new URLSearchParams(window.location.search || '');
+  } catch (e) {
+    qs = new URLSearchParams();
+  }
+
+  var FIGURE_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+  var figureParam = qs.get('figure');
+  var figureName = (typeof figureParam === 'string' && FIGURE_RE.test(figureParam))
+    ? figureParam
+    : 'pedro';
+
+  var BG_RE = /^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+  var bgParam = qs.get('bg');
+  if (typeof bgParam === 'string' && BG_RE.test(bgParam)) {
+    document.documentElement.style.background = '#' + bgParam;
+    document.body.style.background = '#' + bgParam;
+  }
+
+  var stateParam = qs.get('state');
+  var startState = (typeof stateParam === 'string' && stateParam) ? stateParam : 'neutral';
+
+  /* ?mirror=0 flips the head-turn sign; anything else, including no
+   * ?mirror= at all, keeps the default "turns the same way the camera
+   * preview does" behaviour the brief asks for. See the long comment on
+   * IdleFace.headAngles in face.js for why this knob exists at all: the
+   * axis/sign convention it relies on has not been checked against a real
+   * camera. */
+  var mirrorOn = qs.get('mirror') !== '0';
+
+  /* ?debug=1 is the one documented exception to "nothing but the figure" -
+   * a corner overlay with the raw camera preview and the live numbers, for
+   * setting up a scene. Built once, right away, so it exists (and proves it
+   * does not throw) whether or not the figure or the camera ever come up. */
+  var debugOn = qs.get('debug') === '1';
+  var debugEls = null;
+  if (debugOn) buildDebugOverlay();
+
+  var base = '../../figures/' + figureName + '/';
+
+  /* Pinned MediaPipe Tasks Vision version - looked up on the npm registry
+   * on 2026-09-13, where it was the current dist-tag. Bump this literal in
+   * both URLs below by hand when it is time to move; never let either one
+   * float to whatever npm currently calls current - an addon that is
+   * allowed to load from a CDN (see AGENTS.md) still owes the stream a
+   * version that cannot change under it without anyone asking. jsDelivr is
+   * serving the package's own published files, not a fork of them. Keep the
+   * version inline in the string, not built up through concatenation - it
+   * has to stay grep-able as one token. */
+  var VISION_MJS_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+  var WASM_BASE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
+  var MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+  var player = null;
+  var baseMood = startState;
+  var hasHappyState = false;
+  var cameraActive = false;
+  var faceMemory = {};
+  var lastVideoTime = -1;
+
+  function applyMood(name) {
+    if (player && typeof player.setState === 'function') player.setState(name);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * The figure itself - identical in spirit to figure.html, including the
+   * "never paint text into the page" rule in its .catch(). Runs whether or
+   * not the camera ever works: a camera failure must never take the figure
+   * down with it, which is exactly what keeping these two independent
+   * buys. ------------------------------------------------------------------ */
+  fetch(base + 'figure.json')
+    .then(function (r) {
+      if (!r.ok) throw new Error('figure.json ' + r.status);
+      return r.json();
+    })
+    .then(function (fig) {
+      player = new IdleFigure(host, fig, base, { background: false });
+
+      /* No trackPointer(): the pointer comes from the camera (via
+       * IdleFace.step() in the detection loop below) or from nowhere on
+       * failure, never from a mouse - an OBS Browser Source has no mouse
+       * moving over it in the first place, the same reasoning figure.html
+       * already documents. */
+      window.addEventListener('resize', function () { player.fit(); });
+      player.play();
+
+      var stateNames = (window.Idle && typeof Idle.stateNames === 'function')
+        ? Idle.stateNames(fig)
+        : ['neutral'].concat(Object.keys(fig.states || {}));
+      hasHappyState = stateNames.indexOf('happy') !== -1;
+
+      applyMood(baseMood);
+
+      if (window.IdleObs && typeof IdleObs.watchScene === 'function') {
+        IdleObs.watchScene(function (sceneName) {
+          baseMood = IdleObs.matchState(sceneName, stateNames, startState);
+          /* While the camera is driving the figure, IdleFace.step() reads
+           * `baseMood` itself every detected frame (see the detection loop
+           * below) and decides whether a held smile still outranks it -
+           * calling applyMood() here as well would fight that decision with
+           * a mood switch of its own. Without a working camera this scene
+           * watcher IS the whole story, exactly like figure.html: apply it
+           * directly. */
+          if (!cameraActive) applyMood(baseMood);
+        });
+      }
+    })
+    .catch(function (e) {
+      if (window.console && console.error) console.error('OBS avatar page failed to load', e);
+    });
+
+  /* ------------------------------------------------------------------ *
+   * The camera. Every step from here down is optional and fallible: no
+   * camera, a denied permission, an insecure context, a CDN or model that
+   * does not answer. Any of it failing lands in exactly one console.error
+   * with a clear reason and otherwise changes nothing - the figure above
+   * keeps running its own idle schedule and scene-driven moods, precisely
+   * as if this whole block had never run.
+   * ------------------------------------------------------------------ */
+
+  function reportCameraError(reason) {
+    var msg = (reason && reason.message) ? reason.message : String(reason);
+    if (window.console && console.error) {
+      console.error('avatar.html: camera avatar unavailable, the figure keeps its own idle schedule - ' + msg, reason);
+    }
+    setDebugStatus('camera avatar unavailable: ' + msg);
+  }
+
+  function loadFaceLandmarker() {
+    /* Dynamic import(), not a <script type=module>: this whole page is a
+     * classic script like the rest of the addon, and importing only the
+     * one piece that needs a CDN keeps that need visible right here rather
+     * than turning the entire page into a module. vision_bundle.mjs and
+     * vision_bundle.js both ship in this package version (checked on
+     * jsDelivr's file listing before pinning it above); .mjs is what
+     * MediaPipe's own web guide imports, so that is the one used here. */
+    return import(VISION_MJS_URL).then(function (mod) {
+      var FilesetResolver = mod.FilesetResolver;
+      var FaceLandmarker = mod.FaceLandmarker;
+      return FilesetResolver.forVisionTasks(WASM_BASE_URL).then(function (vision) {
+        return FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true
+        });
+      });
+    });
+  }
+
+  /* One MediaPipe FaceLandmarkerResult -> the { yaw, pitch, blendshapes }
+   * shape IdleFace.step() actually wants, or null for "no face this frame".
+   * This is the one place that knows the MediaPipe result shape; face.js
+   * never sees it, which is what keeps face.js testable with plain objects
+   * in tools/test-addons.mjs. Every field is read defensively - a missing
+   * array, a NaN score - because a frame with a garbled result is far more
+   * likely than a truly empty one, and either has to fall back to "no
+   * face" rather than hand face.js a NaN to chase. */
+  function observationFromResults(results) {
+    if (!results || !results.faceLandmarks || !results.faceLandmarks.length) return null;
+    if (!results.facialTransformationMatrixes || !results.facialTransformationMatrixes.length) return null;
+    var matrix = results.facialTransformationMatrixes[0];
+    var angles = IdleFace.headAngles(matrix && matrix.data);
+
+    var blendshapes = {};
+    if (results.faceBlendshapes && results.faceBlendshapes.length &&
+        results.faceBlendshapes[0].categories) {
+      var cats = results.faceBlendshapes[0].categories;
+      for (var i = 0; i < cats.length; i++) {
+        var c = cats[i];
+        if (c && typeof c.categoryName === 'string' &&
+            typeof c.score === 'number' && isFinite(c.score)) {
+          blendshapes[c.categoryName] = c.score;
+        }
+      }
+    }
+    return { yaw: angles.yaw, pitch: angles.pitch, blendshapes: blendshapes };
+  }
+
+  function runDetectionLoop(video, faceLandmarker) {
+    function tick(nowMs) {
+      if (!cameraActive) return;                 /* the video track ended, see below */
+      window.requestAnimationFrame(tick);
+
+      /* A hidden tab still runs a throttled rAF in most browsers; this just
+       * skips the actual detection work while nothing is visible, rather
+       * than relying on that throttling alone. IdleFace.smooth() copes
+       * fine with the long gap this produces once the tab comes back - see
+       * its test in tools/test-addons.mjs. */
+      if (document.hidden) return;
+      if (video.readyState < 2) return;
+      /* detectForVideo on the same frame twice would double-count it for
+       * nothing; skip until the video has actually advanced. */
+      if (video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+
+      var observation = null;
+      try {
+        var results = faceLandmarker.detectForVideo(video, performance.now());
+        observation = observationFromResults(results);
+      } catch (err) {
+        /* One bad frame is not a reason to stop tracking - report it and
+         * treat this tick as "no face", exactly like a frame that genuinely
+         * had none. */
+        if (window.console && console.error) {
+          console.error('avatar.html: detectForVideo failed on this frame, treating it as no face', err);
+        }
+        observation = null;
+      }
+
+      var result = IdleFace.step(faceMemory, observation, nowMs / 1000, {
+        mirror: mirrorOn,
+        hasHappy: hasHappyState,
+        baseMood: baseMood,
+        tau: 0.12
+      });
+      faceMemory = result.memory;
+
+      if (player) {
+        player.pointerX = result.pointerX;
+        player.pointerY = result.pointerY;
+        player.blink = result.blink;
+        player.mouth = result.mouth;
+        applyMood(result.mood);
+      }
+
+      updateDebugOverlay(observation, result);
+    }
+    window.requestAnimationFrame(tick);
+  }
+
+  function startCamera() {
+    try {
+      if (!window.isSecureContext) {
+        throw new Error('page is not a secure context (serve it over https, or from http://127.0.0.1 / http://localhost)');
+      }
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        throw new Error('getUserMedia is not available in this browser');
+      }
+    } catch (e) {
+      reportCameraError(e);
+      return;
+    }
+
+    setDebugStatus('waiting for the camera permission…');
+
+    navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    }).then(function (stream) {
+      var video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+
+      /* A video that never fires "ended" on its own once its track stops
+       * (unplugging the camera, OBS taking exclusive access back) would
+       * leave cameraActive true forever with a frozen currentTime - the
+       * loop above already guards against reprocessing the same frame, so
+       * that alone would just go quiet, but this makes the fallback
+       * explicit and logged rather than silent. */
+      stream.getVideoTracks().forEach(function (track) {
+        track.addEventListener('ended', function () {
+          cameraActive = false;
+          if (window.console && console.error) {
+            console.error('avatar.html: the camera track ended; the figure keeps its own idle schedule from here');
+          }
+          setDebugStatus('camera track ended; back to the idle schedule');
+        });
+      });
+
+      if (debugEls) {
+        debugEls.box.insertBefore(video, debugEls.text);
+        debugEls.video = video;
+      } else {
+        /* Not shown, but still attached: some browsers keep a detached
+         * <video> element from ever advancing currentTime reliably, which
+         * would look identical to "no face" forever. 2x2 and fully
+         * transparent, so nothing is painted - see the "nothing but the
+         * figure" rule this whole file otherwise holds to. */
+        video.style.position = 'fixed';
+        video.style.left = '0';
+        video.style.top = '0';
+        video.style.width = '2px';
+        video.style.height = '2px';
+        video.style.opacity = '0';
+        video.style.pointerEvents = 'none';
+        document.body.appendChild(video);
+      }
+
+      return video.play().then(function () { return video; });
+    }).then(function (video) {
+      setDebugStatus('camera ready, loading the face model…');
+      return loadFaceLandmarker().then(function (faceLandmarker) {
+        return { video: video, faceLandmarker: faceLandmarker };
+      });
+    }).then(function (r) {
+      cameraActive = true;
+      setDebugStatus('tracking');
+      runDetectionLoop(r.video, r.faceLandmarker);
+    }).catch(function (e) {
+      reportCameraError(e);
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * ?debug=1 overlay: a small corner box with the raw preview and the live
+   * numbers, for pointing a camera at this page while setting up a scene.
+   * Never shown otherwise. Built once at load, filled in as the camera
+   * comes up (or does not) - see setDebugStatus()/updateDebugOverlay().
+   * ------------------------------------------------------------------ */
+
+  function buildDebugOverlay() {
+    var box = document.createElement('div');
+    box.id = 'idleFaceDebug';
+    var text = document.createElement('div');
+    text.textContent = 'avatar debug: no camera yet';
+    box.appendChild(text);
+    document.body.appendChild(box);
+    debugEls = { box: box, text: text, video: null };
+  }
+
+  function setDebugStatus(msg) {
+    if (debugEls) debugEls.text.textContent = msg;
+  }
+
+  function updateDebugOverlay(observation, result) {
+    if (!debugEls) return;
+    var lines = [
+      'figure: ' + figureName + (mirrorOn ? '' : '  (mirror off)'),
+      observation
+        ? 'yaw ' + observation.yaw.toFixed(1) + '°  pitch ' + observation.pitch.toFixed(1) + '°'
+        : 'no face this frame',
+      'pointer ' + result.pointerX.toFixed(2) + ', ' + result.pointerY.toFixed(2),
+      'blink ' + (result.blink === undefined ? '(own schedule)' : result.blink),
+      'mouth ' + result.mouth,
+      'mood ' + result.mood
+    ];
+    debugEls.text.textContent = lines.join('\n');
+  }
+
+  startCamera();
+})();
+</script>
+</body>
+</html>

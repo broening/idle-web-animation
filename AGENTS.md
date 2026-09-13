@@ -19,7 +19,9 @@ enforces and what it does not; do not claim more than it does.
 
 `addons/` is the one exception to rule 2: it is optional (the core builds and
 runs a figure without it) and may load code from a CDN - the core under
-`player/`, `studio/` and `tools/` never does.
+`player/`, `studio/` and `tools/` never does. `addons/obs/avatar.html` is the
+one that actually does: a camera avatar page that drives `figure.blink`,
+`figure.mouth` and the pointer from your face, see `addons/obs/README.md`.
 
 ## What you can do from a shell
 
