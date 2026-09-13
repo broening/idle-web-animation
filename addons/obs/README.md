@@ -1,210 +1,211 @@
 # OBS addon
 
-Optional. The core (`player/`, `studio/`, `tools/`) builds and runs a figure
-without any of this - `figure.html` is a thin page that puts a figure into an
-OBS Studio Browser Source, with its mood able to follow the name of the scene
-that is showing it.
+Put an animated figure into OBS Studio, with a transparent background, a mood
+that follows the scene name, and, if you like, a camera that drives the head,
+the eyes, the mouth and a smile.
 
-## Set it up in OBS
+The addon is optional. The core (`player/`, `studio/`, `tools/`) builds and
+runs a figure without any of it.
 
-1. Start the repo's own server from the project root:
+| Page | What it does | Needs |
+|---|---|---|
+| `figure.html` | the figure alone, transparent, mood from the scene name | OBS 28 or newer |
+| `avatar.html` | the same, driven by your webcam | OBS 31 or newer, a launch flag |
 
-   ```
-   python tools/serve.py
-   ```
+## Part A: the figure in OBS
 
-   It serves the whole repository on `127.0.0.1:5173` and binds only to
-   localhost - the same server the studio uses, so if you already have it
-   running for that, this addon uses it too.
+### 1. Start the server
 
-2. In OBS, add a **Browser Source** and set its URL to:
-
-   ```
-   http://127.0.0.1:5173/addons/obs/figure.html?figure=pedro
-   ```
-
-   Replace `pedro` with the name of any folder under `figures/` (letters,
-   digits, `.`, `_`, `-` only - anything else is ignored and the page falls
-   back to `pedro`).
-
-3. Set the source's **Width** and **Height** to whatever the scene needs. The
-   page always fits the figure's own canvas into whatever box it is given,
-   the same way the player does everywhere else (`fit()`), so there is
-   nothing else to configure for sizing.
-
-4. Transparency needs no setup: the page paints nothing but the figure, on a
-   transparent background, by default. If a particular capture chain in your
-   setup flattens alpha away, `?bg=00ff00` (3 or 6 hex digits, no `#`) gives
-   the page a solid background you can chroma-key instead - append it to the
-   URL, e.g. `...figure.html?figure=pedro&bg=00ff00`.
-
-## Scene naming (moods)
-
-The page can read the name of the currently active OBS scene and switch the
-figure's mood to match, with no coding: name a scene so one of its words is a
-mood, and the figure follows it as you switch scenes live.
-
-- A scene called **"Pause sad"** switches to the `sad` mood, because `sad` is
-  one of its words. Matching is case-insensitive and looks at the *first*
-  matching word in the scene name, so `"Just Chatting happy"` and `"happy
-  chatting"` both land on `happy`. A word has to match a mood name exactly -
-  `sad-ish` is one hyphenated word, not `sad` plus something, and does not
-  match.
-- A scene name with **no mood word at all** falls back to `?state=` (see
-  below), or to `neutral` if `?state=` was not given either.
-- `?state=<name>` sets the mood the page starts in *and* the fallback used
-  whenever a scene name carries no mood of its own, e.g.
-  `...figure.html?figure=pedro&state=sad`.
-
-Moods need `figure.states` on the figure and `IdleFigure#setState` in the
-player - both arrive with the moods feature (tracked separately). Until a
-figure actually has states, the page runs, but every mood switch is a no-op
-and the figure simply stays in its neutral pose. Nothing breaks in the
-meantime; there is just nothing to switch to yet.
-
-### The page permission scene names need
-
-Reading the active scene name uses the `window.obsstudio` API the
-**obs-browser** plugin (bundled with OBS Studio) injects into every Browser
-Source: `obsstudio.getCurrentScene(callback)` once, and the `obsSceneChanged`
-event after that (`event.detail.name`). obs-browser's documentation
-(<https://github.com/obsproject/obs-browser>) lists `getCurrentScene` as
-needing the permission level READ_USER; it lists no level for the event.
-Without READ_USER the page therefore does not learn which scene is live when
-it loads, only which one comes next. Open the Browser Source's
-**Properties**, find **Page permissions**, and pick the level that reads user
-information (the scene collection and transitions) or anything above it.
-
-Below that permission level, or outside OBS entirely (a plain browser tab,
-for previewing), `window.obsstudio` is either absent or simply never calls
-back. `scene.js` guards every one of these calls, so the page never throws
-either way - it just never learns the scene name, and every figure shown
-through it stays on its `?state=` mood (or neutral).
-
-## Avatar with camera
-
-`avatar.html` is `figure.html` plus a webcam: the figure looks where you
-look, blinks when you blink, opens its mouth when you talk, and can switch to
-a `happy` mood when you smile - all read from your face with [MediaPipe Face
-Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker),
-loaded from a CDN at a pinned version. `figure.html` never does any of this
-and needs none of what follows; use it instead for a figure that only
-follows the scene name.
-
-**This has been built without a camera or a copy of OBS 31+ to test it on.**
-The rules below (hysteresis thresholds, the face-lost fallback, the smile
-timer) are proven in Node against synthetic data - `node
-tools/test-addons.mjs` - and the page has been opened in a browser with no
-camera at all, where it fell back to the idle figure exactly as designed.
-Whether the head-turn direction and the blink/mouth thresholds feel right on
-an actual face is genuinely unverified; expect to spend a few minutes with
-`?debug=1` the first time.
-
-### Requirements
-
-- **OBS Studio 31 or newer.** OBS 28 to 30 embed Chromium 103, and nobody
-  has confirmed that MediaPipe runs there; OBS 31 and later embed Chromium
-  127. `figure.html` alone works on OBS 28 and later.
-- OBS has to be started with camera access allowed in its embedded browser:
-  add **`--enable-media-stream`** to how OBS is launched. On Windows,
-  right-click the OBS shortcut, **Properties**, and append it to the end of
-  the **Target** field, after the closing quote of the path to `obs64.exe`,
-  with a space before it - for example:
-
-  ```
-  "C:\Program Files\obs-studio\bin\64bit\obs64.exe" --enable-media-stream
-  ```
-
-  Launch OBS from that shortcut (or the equivalent added to a taskbar
-  shortcut's own Properties) rather than from the Start menu entry, which
-  does not carry the flag.
-- The page has to be loaded from `http://127.0.0.1:5173/...` via `python
-  tools/serve.py` - **not** a `file://` path. `getUserMedia` refuses to run
-  at all outside a secure context, and `file://` is not one; `127.0.0.1` and
-  `localhost` are the browser's standing exception, same as the studio
-  already relies on.
-- If OBS itself also shows the camera (a Video Capture Device source) while
-  this page reads it, two programs want the same camera at once, and Windows
-  traditionally gives a camera to one program only. Windows 11 24H2 and later
-  can share it: **Settings > Bluetooth & devices > Cameras > (your camera) >
-  Allow multiple apps to use camera at the same time**. Without that, the
-  second one gets a black frame or an error.
-
-### Set it up in OBS
-
-Add a **Browser Source** exactly as in the section above, pointed at
-`avatar.html` instead of `figure.html`:
+OBS loads the figure from the repo's own server. Open a terminal in the
+project folder:
 
 ```
-http://127.0.0.1:5173/addons/obs/avatar.html?figure=pedro
+cd C:\path\to\idle-web-animation
 ```
 
-OBS's embedded browser has no permission prompt to click. If the camera
-stays off with `--enable-media-stream` alone (`?debug=1` then says so),
-add `--use-fake-ui-for-media-stream` to the shortcut as well; it answers the
-prompt with yes on its own. Everything under "Scene naming (moods)" above still applies
-unchanged: the scene name sets the figure's base mood, `?state=` sets the
-starting mood and the fallback for a scene with no mood word of its own.
+Then start the server:
+
+```
+python tools/serve.py
+```
+
+Leave that window open while you stream. `Ctrl+C` stops the server. It
+listens on `127.0.0.1:5173` only, so nothing on your network can reach it.
+The studio uses the same server; if it already runs, skip this step.
+
+### 2. Add a Browser source
+
+1. In OBS, click **+** under **Sources**.
+2. Pick **Browser**.
+3. Name it, for example "Pedro", and click **OK**.
+
+### 3. Set up the source
+
+| Field | Value |
+|---|---|
+| **Local file** | unchecked |
+| **URL** | `http://127.0.0.1:5173/addons/obs/figure.html?figure=pedro` |
+| **Width** | `1792` |
+| **Height** | `1000` |
+| **Shutdown source when not visible** | unchecked |
+| **Refresh browser when scene becomes active** | unchecked |
+
+Then click **OK**.
+
+- **URL:** replace `pedro` with any folder name under `figures/`. Letters,
+  digits, `.`, `_` and `-` only; anything else falls back to `pedro`.
+- **Width and height:** 1792 x 1000 is Pedro's own canvas, so he stays
+  sharp. Any other size works too; the page fits the figure into the box.
+  Resize the source in the scene as usual.
+- **The two checkboxes:** a source that shuts down or refreshes starts the
+  figure over from the beginning at every scene change.
+- **Transparency** needs no setting. The page paints nothing but the figure.
+
+### 4. Pick a mood (optional)
+
+A figure with moods in its `figure.json` can switch between them. Pedro has
+`sad` and `happy`. There are two ways to choose:
+
+**By scene name.** A word in the scene's name that matches a mood switches
+to it, with a short blend.
+
+| Scene name | Mood |
+|---|---|
+| `Pause sad` | `sad` |
+| `Just Chatting happy` | `happy` |
+| `HAPPY ending` | `happy` (case does not matter) |
+| `Game` | the start mood from the URL, else `neutral` |
+| `sad-ish` | no match: a hyphenated word is one word |
+
+The first matching word wins.
+
+**By URL.** `&state=` sets the mood the page starts in. It is also the mood
+for every scene whose name has no mood word:
+
+```
+http://127.0.0.1:5173/addons/obs/figure.html?figure=pedro&state=sad
+```
+
+**Page permissions.** To read the scene name when the page loads, the source
+needs more than the default. Open the source's **Properties**, find **Page
+permissions**, and pick **Read access to user information** or any level
+above it. Without it the page only learns the scene name at the next scene
+change.
+
+Technically: the page calls `window.obsstudio.getCurrentScene()`, which the
+[obs-browser](https://github.com/obsproject/obs-browser) documentation lists
+under the permission level READ_USER, and listens to the `obsSceneChanged`
+event, for which it lists no level. `scene.js` guards every call, so the page
+never breaks outside OBS or with too little permission.
+
+## Part B: avatar with camera (optional)
+
+`avatar.html` is `figure.html` plus a webcam. The face is read with
+[MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker),
+loaded from jsDelivr at a pinned version.
+
+**Untested on a real camera.** This page was built without a camera and
+without OBS 31. Its rules are tested in Node (`node tools/test-addons.mjs`),
+and in a browser without a camera it falls back to the plain figure as
+designed. Whether the head turns the right way and the thresholds suit a real
+face is not verified. Use `&debug=1` the first time.
+
+### 1. Check your OBS version
+
+**Help > About** in OBS. You need **31 or newer**: OBS 28 to 30 embed
+Chromium 103, and nobody has confirmed that MediaPipe runs there.
+
+### 2. Allow OBS to use the camera
+
+OBS's built-in browser blocks cameras unless OBS starts with a flag.
+
+1. Close OBS completely.
+2. Right-click the OBS shortcut and pick **Properties**.
+3. In **Target**, after the closing quote, add a space and
+   `--enable-media-stream`:
+
+   ```
+   "C:\Program Files\obs-studio\bin\64bit\obs64.exe" --enable-media-stream
+   ```
+
+4. Click **OK** and always start OBS from this shortcut. The Start menu entry
+   does not carry the flag.
+
+### 3. Point the source at the avatar page
+
+Change the URL of the Browser source from Part A:
+
+```
+http://127.0.0.1:5173/addons/obs/avatar.html?figure=pedro&debug=1
+```
+
+`&debug=1` shows your camera image and the live numbers in the bottom left
+corner. Once everything looks right, remove it.
+
+The page must come from `http://127.0.0.1:5173` through `tools/serve.py`,
+never from **Local file**: browsers only open a camera on a secure page, and
+localhost counts as one.
+
+Scene names and `&state=` work exactly as in Part A.
 
 ### What the camera controls
 
-- **Head turn and gaze** follow your head's yaw and pitch, the same
-  `pointerX`/`pointerY` the mouse drives on the demo page -
-  25 degrees of head turn is "full deflection". If the figure turns the
-  wrong way (away from the side you actually turned toward, as seen in your
-  own camera preview), append `&mirror=0` to the URL to flip it. Pitch
-  (nodding) is never mirrored - there is no left/right to get backwards
-  there.
-- **Blinking** replaces the figure's own blink schedule for as long as a
-  face is tracked: both eyes have to register as closed at once for the lids
-  to drop, so a wink alone will not do it. Losing the face for more than a
-  second (camera covered, you step out of frame) hands the schedule back and
-  the figure blinks on its own again, the same as `figure.html` always does.
-- **An open mouth** while you are talking needs the figure to have it to
-  show: two full-canvas layers on the head, `"role": "mouthOpen"` and
-  `"role": "mouthClosed"` (see the mouth recipe in `../../AGENTS.md`).
-  Without those two layers this does nothing - the figure has no mouth to
-  open or close, silently, which is the same "nothing breaks, there is just
-  nothing to switch to" story `figure.html` already tells for moods on a
-  figure that has none.
-- **A held smile** (about half a second) switches the mood to `happy`, if
-  the figure has that mood, and lets go again after about a second and a
-  half without one - a scene change while you are smiling still lands
-  immediately, it is just the `happy` mood that keeps winning until the
-  smile actually ends. A figure with no `happy` mood in its `states` simply
-  never gets this: the scene name (or `?state=`) is the only thing deciding
-  its mood, exactly as without a camera at all.
-- **`?debug=1`** appended to the URL adds a small corner overlay: the raw
-  camera preview and the live numbers (yaw/pitch, pointer, blink, mouth,
-  mood) - for setting up a scene, not for streaming with. Leave it off once
-  it looks right.
+| You | The figure |
+|---|---|
+| turn or tilt your head | turns and looks the same way, like a mirror; 25 degrees is the full turn |
+| close both eyes | blinks; one eye alone does nothing |
+| open your mouth | shows its open mouth, if it has one |
+| smile for half a second | switches to `happy`, if it has that mood |
+| stop smiling for 1.5 seconds | goes back to the scene's mood |
+| leave the picture for a second | blinks on its own again and looks ahead |
 
-### Fallback: chroma key instead of `--enable-media-stream`
+An open mouth needs two mouth layers in the figure, with the roles
+`mouthOpen` and `mouthClosed` (see the Mouth recipe in `../../AGENTS.md`).
+Pedro has none yet, so his mouth stays as painted.
 
-If starting OBS with a flag is not an option, `avatar.html` still runs fine
-in a plain browser tab - Chrome, not OBS's embedded one - which needs no
-flag for camera access at all:
+### If something is wrong
 
-1. Open `http://127.0.0.1:5173/addons/obs/avatar.html?figure=pedro&bg=00ff00`
-   in Chrome and allow the camera prompt.
-2. In OBS, add a **Window Capture** of that Chrome window (not a Browser
-   Source - there is no browser source involved in this fallback at all).
-3. Add a **Chroma Key** filter to the capture, keyed on the same green
-   (`00ff00`). Expect soft edges - hair, a translucent hem - to keep a thin
-   green fringe; a slightly different key colour or a touch of "Spill
-   reduction" in the filter usually cleans that up, the same tradeoff any
-   green-screen capture makes.
+| Problem | Fix |
+|---|---|
+| The camera stays off, `&debug=1` says so | Add `--use-fake-ui-for-media-stream` to the shortcut's **Target** as well, after `--enable-media-stream`. It answers the camera prompt OBS never shows. |
+| The head turns the wrong way | Add `&mirror=0` to the URL. |
+| OBS also shows your camera, and one of the two stays black | Windows gives a camera to one program at a time. Windows 11 24H2 and later can share it: **Settings > Bluetooth & devices > Cameras > (your camera) > Allow multiple apps to use camera at the same time**. |
+| Nothing moves at all | Is `python tools/serve.py` still running? |
 
-This loses the transparency `bg` normally replaces and needs its own window
-kept open outside OBS, but it works on any OBS version at all, with no
-camera-access flag anywhere.
+### Without the launch flag: chroma key
 
-## Why not a rendered video loop
+If you cannot start OBS with a flag, run the page in Chrome instead and key
+out a green background:
 
-A figure here deliberately runs its motions on periods that do not line up
-with each other (see "secondary action" in `../../AGENTS.md`), and `breathe`
-and `sway` each mix two sines at the golden ratio, whose combined period
-never repeats at all. A rendered video has to end somewhere and start again,
-and at that cut every motion jumps back to where it began - the seam the
-studio's window loop shows on purpose. The engine is a function of time, so
-this page simply keeps counting and never reaches a seam.
+1. Open this in Chrome and allow the camera:
+
+   ```
+   http://127.0.0.1:5173/addons/obs/avatar.html?figure=pedro&bg=00ff00
+   ```
+
+2. In OBS, add a **Window Capture** of that Chrome window.
+3. Add a **Chroma Key** filter to it, key colour green.
+
+This works with any OBS version. Soft edges such as hair keep a thin green
+fringe; **Spill reduction** in the filter helps. The Chrome window has to stay
+open.
+
+`&bg=` takes 3 or 6 hex digits without `#` and works on `figure.html` too.
+
+## URL parameters
+
+| Parameter | Pages | Meaning |
+|---|---|---|
+| `figure=pedro` | both | folder under `figures/`; default `pedro` |
+| `state=sad` | both | start mood, and the mood for scene names without a mood word |
+| `bg=00ff00` | both | solid background for chroma key; default transparent |
+| `debug=1` | avatar | camera image and live numbers in a corner |
+| `mirror=0` | avatar | flips the head turn |
+
+## Why not a video loop
+
+A figure here runs its motions on periods that deliberately do not line up,
+and `breathe` and `sway` each mix two sines at the golden ratio, whose sum
+never repeats. A video has to end and start again, and at that cut every
+motion jumps back to where it began. The page runs the engine itself, which
+is a function of time, so it keeps counting and never reaches a seam.
