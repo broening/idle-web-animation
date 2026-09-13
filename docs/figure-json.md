@@ -23,6 +23,8 @@ keyframes.
 | `motion.windowSeconds` | The review window. The contact sheet samples this span. It is **not** a loop period — see `principles.md`. Read by the studio only; the player ignores it. |
 | `motion.followSeconds` | How far each step down the parent chain lags. `0.085` is a good start. |
 | `motion.parallax` | How strongly layers separate as the pointer moves. `0.35` is subtle, above `0.8` it starts to look like a toy. |
+| `motion.stateSeconds` | How long a switch from one mood to another blends, in seconds. `0.4` by default, `0` is a hard cut, `5` at most; a negative value gets the default. See [Moods](#moods-states). |
+| `states` | Moods: named sets of differences from the layers as written. See [Moods](#moods-states). |
 
 ## A layer
 
@@ -52,6 +54,8 @@ keyframes.
 | `pivot` | `[x, y]` in 0…1 of the canvas. This is the joint: the elbow for a hand, the neck for a head, the collar for a cloak. Drag it in the studio rather than guessing. |
 | `depth` | 0…1, back to front. Drives parallax only. |
 | `offset` | `[x, y]` in canvas pixels, a standing correction for a part that was cut a few pixels off. Children inherit it; the pivot does not move with it. Alt-drag it on the stage, or nudge it with the arrow keys. Leave it out when it is `[0, 0]`. |
+| `tilt` | Degrees, a standing rotation about the pivot on top of whatever the motions turn. Children inherit it, like `offset`. Mostly useful in a mood; leave it out when it is 0. |
+| `hidden` | `true` leaves the layer out of the picture in both renderers. It wins over the eye roles: a hidden `eyesClosed` layer stays hidden mid-blink. A mood can set it back to `false`. |
 | `lag` | Extra seconds of delay on top of the chain lag. |
 | `role` | `"eyesOpen"` marks the layer a `blink` hides. The `blink` motion may sit on this layer or on any ancestor. |
 | `blend` | CSS `mix-blend-mode`, e.g. `"screen"`. Applies in the page and in the contact sheet alike. |
@@ -216,6 +220,107 @@ head that lifts the whole hat — measured at 2.7 px on `grim`, which is five
 times the drift the rest of that rig was built to hold. On the eye layers
 themselves the same term is worth 0.3 px. Two siblings under one parent read
 time at the same depth, so one schedule written twice fires as one event.
+
+## Moods (states)
+
+A mood is a second look for the same rig: the head a little lower, the
+breathing slower, another mouth. The page asks for one by name, a stream
+overlay when the scene changes or a game when the character is hurt, and the
+figure blends there.
+
+```json
+"motion": { "stateSeconds": 0.4 },
+"states": {
+  "sad":   { "kopf":  { "offset": [0, 6], "tilt": -2.5 },
+             "torso": { "breathe": { "period": 5.5 } } },
+  "happy": { "kopf":  { "offset": [0, -3] },
+             "torso": { "breathe": { "period": 3.4, "strength": 1.2 } } }
+}
+```
+
+That example changes posture only, and posture is where to start. A head six
+pixels lower with a small forward tilt and a slower breath reads as sad before
+a single picture is repainted.
+
+**`neutral`** is the layers as written. It is never listed in `states`; a
+`states.neutral` entry is ignored. Every mood lists **only what differs from
+neutral**, never from another mood, so a switch from sad to happy goes
+straight there.
+
+**Names** are lowercase letters, digits, `-` and `_`, start with a letter or
+digit, and are at most 32 characters. Lowercase so that a scene called
+`Sad - Intro` can find the mood `sad` without guessing at case.
+
+**A mood's value replaces the layer's**, it does not add to it. A head whose
+layer carries a cutting correction of `[2, 0]` and should sit six pixels lower
+writes `"offset": [2, 6]`.
+
+What a mood can change:
+
+| Key | What it does |
+|---|---|
+| `src` | Another picture for the layer, painted full canvas like every layer and swapped whole. Ignored on a `frames` layer, where the flipbook picks. |
+| `crop` | The rectangle for that `src`. The studio's **Export** writes it; do not write it by hand. A mood's `src` without one shows at full canvas. One file has one cut: the layer's own `crop` wins for its own file, and the first mood's wins when two moods show the same file. |
+| `offset` | Replaces the layer's `offset`. |
+| `tilt` | Replaces the layer's `tilt`. |
+| `hidden` | `true` or `false`. |
+| `breathe`, `sway`, `gaze`, `glow`, `blink`, `flipbook`, `charge`, `drift` | An object of parameters laid over the layer's motion of that type, e.g. `{ "period": 5.5 }`. A motion the layer does not have is ignored: a mood changes motions, it does not add them. `type` inside is ignored. A value of the wrong kind, like `"period": "slow"`, keeps the layer's own. |
+
+Everything else is **fixed**: `id`, `pivot`, `parent`, `depth`, `role`,
+`blend`, `lag`, `frames`, `crops`, `motions`, `opacity`, `alt`, and any key not
+in the table. Those are the rig, and the rig stays one rig. A blend between
+two moods that disagreed about a pivot would have to put a joint halfway
+between two anatomies; the parent chain is what times follow-through; a role
+decides blinks, and a blend mode flipping mid-switch is a flash, not a mood.
+The engine ignores fixed keys rather than failing, so a typo would be silent.
+`Idle.checkStates(figure)` lists every ignored key, bad name and bad value,
+and `node tools/test-states.mjs` refuses a figure that has any.
+
+### What a switch looks like
+
+Both moods are solved and mixed over `motion.stateSeconds`. **Position and
+motion blend smoothly.** Two different periods never jump: each mood's
+breathing runs on its own clock and only the mix between them moves. Measured
+in `tools/test-determinism.mjs`: a torso going from a 4.0 s to a 5.5 s breath
+moves at most 0.165 px between two frames at 120 fps, against 9.2 px as a hard
+cut.
+
+**Pictures switch hard, in the middle of the blend.** So do `hidden`, the
+flipbook frame and the blink. Half a picture is not a thing a layer can show;
+in the middle, the head is already on its way, and a swap inside a movement is
+where a cut hides best. Every picture a mood can show is loaded with the
+figure, so a switch never waits for a file.
+
+### From the page
+
+```js
+var figure = new IdleFigure(host, data, 'figures/pedro/');
+figure.play();
+figure.setState('sad');     // true; false for a name the figure does not have
+figure.state;               // 'sad', the mood asked for last
+Idle.stateNames(data);      // ['neutral', 'sad', 'happy']
+Idle.checkStates(data);     // [] when every mood is usable
+```
+
+`setState` blends from whichever mood currently shows more: asked for happy a
+quarter of the way from neutral to sad, it starts from neutral. It switches
+hard instead of blending when `stateSeconds` is 0, when the studio's window
+loop is on (its clock jumps back at the seam), and when the figure is paused
+(a paused clock would hold the blend at its start forever).
+
+Anyone calling `solve` or `drawFrame` directly passes the mood in `ctx`,
+either a name or a blend whose `since` is on the same clock as `t`:
+
+```js
+Idle.solve(data, t, { state: 'sad' });
+Idle.solve(data, t, { state: { from: 'neutral', to: 'sad', since: 12.0 } });
+Idle.drawFrame(g, data, images, t, { ctx: { state: 'sad' } });
+```
+
+An unknown name, or none, is neutral. A renderer of your own asks
+`Idle.imageOf(layer, solvedLayer, data)` which picture shows and where, and
+`Idle.imagesOf(layer, data)` for every picture to load up front, the way both
+built-in renderers do.
 
 ## Blend modes, and why effects are cheap
 
