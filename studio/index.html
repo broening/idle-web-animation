@@ -344,6 +344,10 @@
         inside one <code>obs.html</code>. The size above decides how big its
         layers are too. The figure's own background never comes along; the
         page stays transparent.</p>
+        <p class="hint">A logo always ships as its own OBS source,
+        <code>logo.html</code>, which you move and scale in OBS. Tick
+        <b>logo inside figure</b> to also bake it into <code>obs.html</code>
+        at logo X, Y and width.</p>
 
         <div class="row">
           <label class="btn ghost file" id="obsLogoBtn"
@@ -355,6 +359,12 @@
           <button id="obsLogoRemove" class="btn ghost" type="button" hidden>
             Remove logo
           </button>
+        </div>
+        <div class="row">
+          <label class="chk"
+                 title="also place the logo inside obs.html; without it, the logo is only its own OBS source (logo.html)">
+            <input id="obsLogoInFigure" type="checkbox"> logo inside figure
+          </label>
         </div>
 
         <label class="slider"><span>logo X</span>

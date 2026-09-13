@@ -3717,10 +3717,30 @@
    * exists across a figure swap or a rebuildStage(). Box formula matches
    * the contract IdleObsPackage.build follows for the real overlay, so what
    * is previewed here is where the logo actually ends up in obs.html. */
+  function obsLogoInFigure() {
+    var box = $('obsLogoInFigure');
+    return !!(box && box.checked);
+  }
+
+  /* "logo inside figure" off: the logo only ships as logo.html, placed in
+   * OBS, so X / Y / width have nothing to place and the stage shows no
+   * preview. On: everything as before. */
+  function syncObsLogoInFigure() {
+    var on = obsLogoInFigure();
+    var ids = ['obsLogoX', 'obsLogoY', 'obsLogoW'];
+    for (var i = 0; i < ids.length; i++) {
+      var input = $(ids[i]);
+      if (!input) continue;
+      input.disabled = !on;
+      if (input.parentNode && input.parentNode.classList) input.parentNode.classList.toggle('off', !on);
+    }
+    refreshLogoPreview();
+  }
+
   function refreshLogoPreview() {
     var old = document.getElementById('obsLogoPreviewEl');
     if (old && old.parentNode) old.parentNode.removeChild(old);
-    if (!obsLogo || !state.fig || !state.fig.stage) return;
+    if (!obsLogo || !obsLogoInFigure() || !state.fig || !state.fig.stage) return;
 
     var f = state.figure;
     var w = (f && f.size && f.size.width) || 1000;
@@ -3818,6 +3838,7 @@
     var credit = $('obsCredit') ? $('obsCredit').value : '';
     var license = $('obsLicense') ? $('obsLicense').value : '';
     var wipe = $('obsWipe').checked, glow = $('obsGlow').checked, gleam = $('obsGleam').checked;
+    var inFigure = obsLogoInFigure();
     var v = obsSliderValues();
     var logoInfo = obsLogo;
     var name = state.name;
@@ -3847,7 +3868,8 @@
               file: logoFileName,
               aspect: logoInfo.aspect,
               x: v.x, y: v.y, width: v.width,
-              wipe: wipe, glow: glow, gleam: gleam
+              wipe: wipe, glow: glow, gleam: gleam,
+              inFigure: inFigure
             } : null;
 
             var opts = {
@@ -3927,6 +3949,9 @@
         });
       })(sliderIds[i]);
     }
+
+    $('obsLogoInFigure').addEventListener('change', syncObsLogoInFigure);
+    syncObsLogoInFigure();
 
     $('obsCredit').value = readObsCredit();
     $('obsCredit').addEventListener('input', function () {

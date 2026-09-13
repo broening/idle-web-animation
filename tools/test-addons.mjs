@@ -328,9 +328,9 @@ function baseOpts(extra) {
     name: 'pedro',
     figure: clone(pedro),
     sources: SOURCES,
-    logo: { file: 'logo.webp', aspect: 1948 / 1208, x: 0.62, y: 0.8, width: 0.34, wipe: true, glow: true, gleam: true },
+    logo: { file: 'logo.webp', aspect: 1948 / 1208, x: 0.62, y: 0.8, width: 0.34, wipe: true, glow: true, gleam: true, inFigure: true },
     startState: 'neutral',
-    credit: 'Dan Enso (@danenso)',
+    credit: 'Max Muster (@maxmuster)',
     license: 'CC-BY-4.0',
     date: '2026-09-13'
   }, extra || {});
@@ -409,8 +409,8 @@ function runPage(html, sceneName) {
   check('validate(): the pedro proof options have no problems', JSON.stringify(IdleObsPackage.validate(opts)), '[]');
 
   const files = IdleObsPackage.build(opts);
-  check('build(): obs.html, ANLEITUNG.txt, LICENSE.txt in that order',
-    files.map((f) => f.name).join(','), 'obs.html,ANLEITUNG.txt,LICENSE.txt');
+  check('build(): obs.html, logo.html, ANLEITUNG.txt, LICENSE.txt in that order',
+    files.map((f) => f.name).join(','), 'obs.html,logo.html,ANLEITUNG.txt,LICENSE.txt');
   check('build(): the same opts give the same bytes',
     JSON.stringify(IdleObsPackage.build(baseOpts())), JSON.stringify(files));
 
@@ -484,12 +484,12 @@ function runPage(html, sceneName) {
   check('logo CSS: -webkit- mask properties for Chromium 103', /-webkit-mask-position: 100% 50%/.test(html), true);
 
   /* Credit: in the top comment and the author meta, nowhere else. */
-  const credit = 'Dan Enso (@danenso)';
+  const credit = 'Max Muster (@maxmuster)';
   const top = html.match(/^<!doctype html>\n<!--[\s\S]*?-->/);
   check('credit: in the top comment', !!top && top[0].indexOf(credit) >= 0, true);
   check('credit: in <meta name="author">', html.indexOf('<meta name="author" content="' + credit + '">') >= 0, true);
   const rest = html.replace(top[0], '').replace('<meta name="author" content="' + credit + '">', '');
-  check('credit: nowhere else in obs.html', rest.indexOf('danenso') >= 0 || rest.indexOf('Dan Enso') >= 0, false);
+  check('credit: nowhere else in obs.html', rest.indexOf('maxmuster') >= 0 || rest.indexOf('Max Muster') >= 0, false);
 
   const guide = fileOf(files, 'ANLEITUNG.txt');
   check('ANLEITUNG.txt: real width', guide.indexOf('Breite (Width): 1792') >= 0, true);
@@ -497,7 +497,7 @@ function runPage(html, sceneName) {
   for (const s of Idle.stateNames(pedro)) {
     check('ANLEITUNG.txt: names the mood "' + s + '"', new RegExp('\\b' + s + '\\b').test(guide), true);
   }
-  check('ANLEITUNG.txt: credit sentence to copy', guide.indexOf('Figur: Pedro von Dan Enso (@danenso), CC BY 4.0') >= 0, true);
+  check('ANLEITUNG.txt: credit sentence to copy', guide.indexOf('Figur: Pedro von Max Muster (@maxmuster), CC BY 4.0') >= 0, true);
   check('ANLEITUNG.txt: Local file', guide.indexOf('Lokale Datei') >= 0, true);
 
   const lic = fileOf(files, 'LICENSE.txt');
@@ -580,11 +580,11 @@ function runPage(html, sceneName) {
   check('glow period 4.2 lands in the CSS', glowHtml.indexOf('logoAtem 4.2s') >= 0, true);
 
   /* Effects switch independently. */
-  const plain = fileOf(IdleObsPackage.build(baseOpts({ logo: { file: 'logo.webp', aspect: 1.6, x: 0.5, y: 0.5, width: 0.3, wipe: false, glow: false, gleam: false } })), 'obs.html');
+  const plain = fileOf(IdleObsPackage.build(baseOpts({ logo: { file: 'logo.webp', aspect: 1.6, x: 0.5, y: 0.5, width: 0.3, wipe: false, glow: false, gleam: false, inFigure: true } })), 'obs.html');
   check('all effects off: no animation keyframes', /@keyframes logo/.test(plain), false);
   check('wipe off: no mask on .logo-inner, the logo shows from the start', /-webkit-mask-image: linear-gradient/.test(plain), false);
   check('all effects off: the picture is still there', plain.indexOf("background-image: url('logo.webp')") >= 0, true);
-  const gleamOnly = fileOf(IdleObsPackage.build(baseOpts({ logo: { file: 'logo.webp', aspect: 1.6, x: 0.5, y: 0.5, width: 0.3, wipe: false, glow: false, gleam: true } })), 'obs.html');
+  const gleamOnly = fileOf(IdleObsPackage.build(baseOpts({ logo: { file: 'logo.webp', aspect: 1.6, x: 0.5, y: 0.5, width: 0.3, wipe: false, glow: false, gleam: true, inFigure: true } })), 'obs.html');
   check('gleam without wipe: starts after 2 s, no wipe, no breath',
     gleamOnly.indexOf('logoGleam 9s ease-in-out 2s infinite') >= 0 && !/logoWipe|logoAtem/.test(gleamOnly), true);
 
@@ -640,7 +640,175 @@ function runPage(html, sceneName) {
   check('build(): throws on a problem', throws(() => IdleObsPackage.build(baseOpts({ license: 'MIT' }))), true);
   const spaced = IdleObsPackage.build(baseOpts({ name: 'mein pedro' }));
   check('a name with spaces: title', fileOf(spaced, 'obs.html').indexOf('<title>Mein pedro</title>') >= 0, true);
-  check('a name with spaces: credit sentence', fileOf(spaced, 'ANLEITUNG.txt').indexOf('Figur: Mein pedro von Dan Enso (@danenso), CC BY 4.0') >= 0, true);
+  check('a name with spaces: credit sentence', fileOf(spaced, 'ANLEITUNG.txt').indexOf('Figur: Mein pedro von Max Muster (@maxmuster), CC BY 4.0') >= 0, true);
+  check('validate: logo inFigure not a boolean', /logo\.inFigure/.test(problems(null, { inFigure: 'yes' })), true);
+  check('validate: logo inFigure false is fine', problems(null, { inFigure: false }), '');
+  check('validate: logo without inFigure is fine', problems(null, { inFigure: undefined }), '');
+})();
+
+/* L6 (gates/L6-logo-separate.md): the logo as its own OBS source,
+ * logo.inFigure, and a package that names no person for its code. */
+(function () {
+  const build = IdleObsPackage.build;
+  const credit = 'Max Muster (@maxmuster)';
+  const onOpts = baseOpts();
+  const offLogo = Object.assign({}, onOpts.logo, { inFigure: false });
+  const defLogo = Object.assign({}, onOpts.logo);
+  delete defLogo.inFigure;
+  const filesOn = build(onOpts);
+  const filesOff = build(baseOpts({ logo: offLogo }));
+  const filesDef = build(baseOpts({ logo: defLogo }));
+  const filesNone = build(baseOpts({ logo: null }));
+
+  check('logo, inFigure false: obs.html, logo.html, ANLEITUNG.txt, LICENSE.txt',
+    filesOff.map((f) => f.name).join(','), 'obs.html,logo.html,ANLEITUNG.txt,LICENSE.txt');
+  check('no logo: no logo.html', filesNone.map((f) => f.name).join(','), 'obs.html,ANLEITUNG.txt,LICENSE.txt');
+
+  /* obs.html carries the logo only with inFigure: true. */
+  const htmlOff = fileOf(filesOff, 'obs.html');
+  const htmlNone = fileOf(filesNone, 'obs.html');
+  check('inFigure false: obs.html is byte for byte the page without a logo', htmlOff, htmlNone);
+  check('inFigure missing: obs.html is byte for byte the page without a logo', fileOf(filesDef, 'obs.html'), htmlNone);
+  check('inFigure false: no logo markup, CSS or code in obs.html',
+    /logo/i.test(htmlOff.replace(/id="idle-obs-config">[\s\S]*?<\/script>/, '')), false);
+  check('inFigure false: config logo is null', jsonBlock(htmlOff, 'idle-obs-config').logo, null);
+  check('inFigure false: nothing appended into the stage', runPage(htmlOff).appended.length, 0);
+  const htmlOn = fileOf(filesOn, 'obs.html');
+  check('inFigure true: obs.html has the logo CSS', htmlOn.indexOf('.logo-inner {') >= 0, true);
+  check('inFigure true: the page appends the logo', runPage(htmlOn).appended.length, 1);
+
+  /* logo.html */
+  const lh = fileOf(filesOff, 'logo.html');
+  check('logo.html: the same page whether inFigure is true or false', fileOf(filesOn, 'logo.html'), lh);
+  check('logo.html: no <script at all', /<script/i.test(lh), false);
+  check('logo.html: no fetch(', /fetch\(/.test(lh), false);
+  check('logo.html: no http(s) URL', /https?:\/\//i.test(lh), false);
+  check('logo.html: no external stylesheet', /<link/i.test(lh), false);
+  check('logo.html: no carriage returns', /\r/.test(lh), false);
+  check('logo.html: transparent, margin 0, full height, no scrollbars',
+    lh.indexOf('html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }') >= 0, true);
+  check('logo.html: 32px inset for the glow on every side',
+    lh.indexOf('.logo-frame { position: absolute; top: 32px; right: 32px; bottom: 32px; left: 32px; }') >= 0, true);
+  check('logo.html: 3% inset inside it on every side',
+    lh.indexOf('.logo-frame .logo { top: 3%; right: 3%; bottom: 3%; left: 3%; }') >= 0, true);
+  check('logo.html: only the logo in <body>',
+    (lh.match(/<body>\n([\s\S]*?)\n<\/body>/) || [])[1],
+    '<div class="logo-frame"><div class="logo" aria-hidden="true"><div class="logo-inner"></div></div></div>');
+  const obsLogoCss = (htmlOn.match(/#host \{[^\n]*\}\n([\s\S]*?)\n<\/style>/) || [])[1];
+  const pageLogoCss = (lh.match(/\.logo-frame \.logo \{[^\n]*\}\n([\s\S]*?)\n<\/style>/) || [])[1];
+  check('logo.html: the logo CSS is exactly the one in obs.html', !!obsLogoCss && pageLogoCss === obsLogoCss, true);
+  check('logo.html: background-size contain fits a source of any aspect', lh.indexOf('background-size: contain;') >= 0, true);
+  check('logo.html: wipe, sheen, breath, gleam', ['logoWipe', 'logoSheen', 'logoAtem', 'logoGleam']
+    .every((k) => lh.indexOf('@keyframes ' + k) >= 0), true);
+  check('logo.html: glow period is the first breathe period (4)', lh.indexOf('animation: logoAtem 4s ease-in-out infinite') >= 0, true);
+  check('logo.html: gleam starts 2 s after the wipe', lh.indexOf('logoGleam 9s ease-in-out 4.9s infinite') >= 0, true);
+  check('logo.html: prefers-reduced-motion block', lh.indexOf('@media (prefers-reduced-motion: reduce)') >= 0, true);
+  check('logo.html: -webkit- mask properties for Chromium 103', /-webkit-mask-position: 100% 50%/.test(lh), true);
+  check('logo.html: picture from the file next to it', lh.indexOf("background-image: url('logo.webp')") >= 0, true);
+
+  function logoPage(extra, optsExtra) {
+    const logo = Object.assign({ file: 'logo.png', aspect: 1.6, x: 0.5, y: 0.5, width: 0.3, wipe: false, glow: false, gleam: false }, extra);
+    return fileOf(build(baseOpts(Object.assign({ logo: logo }, optsExtra || {}))), 'logo.html');
+  }
+  const lPlain = logoPage({});
+  check('logo.html, all effects off: no keyframes', /@keyframes/.test(lPlain), false);
+  check('logo.html, all effects off: no mask on the picture', /mask-image: linear-gradient/.test(lPlain), false);
+  check('logo.html, all effects off: the picture is still there', lPlain.indexOf("background-image: url('logo.png')") >= 0, true);
+  const lGleam = logoPage({ gleam: true });
+  check('logo.html, gleam without wipe: starts after 2 s, no wipe, no breath',
+    lGleam.indexOf('logoGleam 9s ease-in-out 2s infinite') >= 0 && !/logoWipe|logoAtem|logoSheen/.test(lGleam), true);
+  const lWipe = logoPage({ wipe: true });
+  check('logo.html, wipe only: wipe and sheen, no gleam, no breath',
+    /@keyframes logoWipe/.test(lWipe) && /@keyframes logoSheen/.test(lWipe) && !/logoGleam|logoAtem/.test(lWipe), true);
+  const lGlow = logoPage({ glow: true, period: 5.5 });
+  check('logo.html, glow only: logo.period wins', lGlow.indexOf('animation: logoAtem 5.5s ease-in-out infinite') >= 0 && !/logoWipe|logoGleam/.test(lGlow), true);
+  const noBreathe = clone(pedro);
+  noBreathe.layers.forEach((l) => { l.motions = (l.motions || []).filter((mo) => mo.type !== 'breathe'); });
+  check('logo.html, glow without a breathe: 4.2 s', logoPage({ glow: true }, { figure: noBreathe }).indexOf('logoAtem 4.2s') >= 0, true);
+  check('logo.html: the page does not depend on the aspect (contain does the fitting)',
+    logoPage({ aspect: 12, wipe: true, glow: true, gleam: true }), logoPage({ aspect: 0.08, wipe: true, glow: true, gleam: true }));
+  check('logo.html: reduced motion stops every animation and the wipe mask',
+    lh.indexOf('.logo, .logo-inner, .logo-inner::before, .logo-inner::after { animation: none; }') >= 0 &&
+    lh.indexOf('.logo-inner { -webkit-mask-image: none; mask-image: none; }') >= 0, true);
+
+  /* Credit in logo.html: comment and author meta, like obs.html. */
+  const ltop = lh.match(/^<!doctype html>\n<!--[\s\S]*?-->/);
+  check('logo.html credit: in the top comment', !!ltop && ltop[0].indexOf(credit) >= 0, true);
+  check('logo.html credit: in <meta name="author">', lh.indexOf('<meta name="author" content="' + credit + '">') >= 0, true);
+  const lrest = lh.replace(ltop[0], '').replace('<meta name="author" content="' + credit + '">', '');
+  check('logo.html credit: nowhere else', lrest.indexOf('maxmuster') >= 0 || lrest.indexOf('Max Muster') >= 0, false);
+  const lNoCredit = logoPage({}, { credit: '', license: '' });
+  check('logo.html without credit: no author meta, no Figure line', /name="author"|Figure:/.test(lNoCredit), false);
+
+  /* Tag safety, as for obs.html. */
+  const evilLh = fileOf(build(baseOpts({ logo: offLogo, name: 'evil ' + EVIL, credit: 'x --> <style></style> ' + EVIL })), 'logo.html');
+  const evilObs = fileOf(build(baseOpts({ name: 'evil ' + EVIL, credit: 'x --> ' + EVIL })), 'obs.html');
+  check('logo.html escaping: no <script', /<script/i.test(evilLh), false);
+  check('logo.html escaping: exactly one </style closer', (evilLh.match(/<\/style/gi) || []).length, 1);
+  check('logo.html escaping: exactly one <style opener', (evilLh.match(/<style/gi) || []).length, 1);
+  check('logo.html escaping: no <!-- after the top comment', evilLh.indexOf('<!--', 20), -1);
+  check('logo.html escaping: the top comment ends once', (evilLh.match(/-->/g) || []).length, 1);
+  check('logo.html escaping: the name is text in <title>', evilLh.indexOf('<title>Evil &lt;/script&gt;') >= 0, true);
+  check('obs.html escaping: a credit with --> ends the top comment only once', (evilObs.match(/-->/g) || []).length, 1);
+
+  /* The credit field's text appears exactly, in every file that names it. */
+  const guideOff = fileOf(filesOff, 'ANLEITUNG.txt');
+  const licOff = fileOf(filesOff, 'LICENSE.txt');
+  check('credit exactly: obs.html comment', htmlOff.indexOf('  Figure: Pedro by ' + credit + ', CC BY 4.0 (see LICENSE.txt).') >= 0, true);
+  check('credit exactly: logo.html comment', lh.indexOf('  Figure: Pedro by ' + credit + ', CC BY 4.0 (see LICENSE.txt).') >= 0, true);
+  check('credit exactly: ANLEITUNG.txt', guideOff.indexOf('  Figur: Pedro von ' + credit + ', CC BY 4.0\r\n') >= 0, true);
+  check('credit exactly: LICENSE.txt', licOff.indexOf('\r\n' + credit + '.\r\n') >= 0 && licOff.indexOf('Nenne ' + credit + ' als Urheber') >= 0, true);
+
+  /* No person named for the code, in any file of any build. */
+  const outputs = [filesOn, filesOff, filesDef, filesNone,
+    build(baseOpts({ credit: '', license: '' })), build(baseOpts({ logo: null, credit: '', license: '' }))];
+  let named = false;
+  outputs.forEach((fs) => fs.forEach((f) => { if (/broening|bröning|daniel/i.test(f.text)) named = true; }));
+  check('no build output names Broening, Bröning or Daniel', named, false);
+  check('code notice in obs.html', htmlOff.indexOf('  Player code: idle-web-animation, MIT License.\n') >= 0, true);
+  check('code notice in logo.html', lh.indexOf('  Page code: idle-web-animation, MIT License.\n') >= 0, true);
+  check('code notice in LICENSE.txt (DE and EN), naming logo.html too',
+    licOff.indexOf('- der Programmcode in obs.html und logo.html:\r\n  idle-web-animation, MIT License.') >= 0 &&
+    licOff.indexOf('- the program code in obs.html and logo.html:\r\n  idle-web-animation, MIT License.') >= 0, true);
+  check('code notice in LICENSE.txt without a logo: obs.html only',
+    fileOf(filesNone, 'LICENSE.txt').indexOf('- der Programmcode in obs.html:\r\n  idle-web-animation, MIT License.') >= 0, true);
+  check('LICENSE.txt: the logo is still not under CC BY', /logo\.webp\)\. Es ist das Zeichen seines Inhabers/.test(licOff), true);
+
+  /* ANLEITUNG.txt: the logo section. */
+  const sec = guideOff.indexOf('DAS LOGO ALS EIGENE QUELLE');
+  const after = guideOff.slice(sec);
+  const size = IdleObsPackage.logoSourceSize(1948 / 1208);
+  check('logoSourceSize: pedro logo 800 x 520', size.width + 'x' + size.height, '800x520');
+  check('ANLEITUNG.txt: logo section after the figure steps, before the moods',
+    sec > guideOff.indexOf('IN OBS EINBINDEN') && sec < guideOff.indexOf('STIMMUNGEN'), true);
+  check('ANLEITUNG.txt: logo.html listed in the folder', guideOff.indexOf('logo.html      das Logo als eigene Quelle in OBS.') >= 0, true);
+  check('ANLEITUNG.txt logo: Browser source named Logo, Local file, logo.html',
+    after.indexOf('Wähle "Browser".') >= 0 && after.indexOf('Gib den Namen "Logo" ein.') >= 0 &&
+    after.indexOf('"Lokale Datei" (Local file)') >= 0 && after.indexOf('Wähle logo.html aus diesem Ordner.') >= 0, true);
+  check('ANLEITUNG.txt logo: real width and height', after.indexOf('6. Breite (Width): 800\r\n7. Höhe (Height): 520\r\n') >= 0, true);
+  check('ANLEITUNG.txt logo: both checkboxes unticked',
+    after.indexOf('(Shutdown source when not visible)') >= 0 && after.indexOf('(Refresh browser when scene becomes active)') >= 0, true);
+  check('ANLEITUNG.txt logo: move, scale, Alt crop, above the figure',
+    ['mit der Maus', 'roten Ecken', 'Halte Alt gedrückt', 'über der Figur'].every((k) => after.indexOf(k) >= 0), true);
+  check('ANLEITUNG.txt logo: Image source alternative with the file', after.indexOf('"Bild" (Image)') >= 0 && after.indexOf('Datei logo.webp aus diesem Ordner') >= 0, true);
+  check('ANLEITUNG.txt logo, inFigure false: says the logo is not in obs.html', after.indexOf('Das Logo ist nicht in obs.html.') >= 0, true);
+  const guideOn = fileOf(filesOn, 'ANLEITUNG.txt');
+  check('ANLEITUNG.txt logo, inFigure true: the extra source is optional',
+    guideOn.indexOf('Das Logo steckt schon in obs.html.') >= 0 && guideOn.indexOf('brauchst du nur') >= 0, true);
+  const guideNone = fileOf(filesNone, 'ANLEITUNG.txt');
+  check('ANLEITUNG.txt without logo: no logo section, no logo.html', /DAS LOGO|logo\.html/.test(guideNone), false);
+
+  /* Very wide and very tall logos: the suggested source keeps the full long
+   * side and the box inside the insets keeps the logo's aspect. */
+  [12, 3, 1, 0.5, 0.08].forEach((a) => {
+    const s = IdleObsPackage.logoSourceSize(a);
+    check('logoSourceSize ' + a + ': the long side is 800', Math.max(s.width, s.height), 800);
+    checkClose('logoSourceSize ' + a + ': the inner box has the logo aspect', (s.width - 64) / (s.height - 64), a, a * 0.03);
+  });
+  const wide = fileOf(build(baseOpts({ logo: Object.assign({}, offLogo, { aspect: 12 }) })), 'ANLEITUNG.txt');
+  check('ANLEITUNG.txt, logo aspect 12: 800 x 125', wide.indexOf('6. Breite (Width): 800\r\n7. Höhe (Height): 125\r\n') >= 0, true);
+  const tall = fileOf(build(baseOpts({ logo: Object.assign({}, offLogo, { aspect: 0.08 }) })), 'ANLEITUNG.txt');
+  check('ANLEITUNG.txt, logo aspect 0.08: 123 x 800', tall.indexOf('6. Breite (Width): 123\r\n7. Höhe (Height): 800\r\n') >= 0, true);
 })();
 
 if (failures) {

@@ -6,10 +6,13 @@
  * idle.css and scene.js, the logo settings) and gets back the text files that
  * go into the zip next to the pictures:
  *
- *   IdleObsPackage.build(opts)    -> [{ name, text }]   obs.html, ANLEITUNG.txt, LICENSE.txt?
+ *   IdleObsPackage.build(opts)    -> [{ name, text }]   obs.html, logo.html?, ANLEITUNG.txt, LICENSE.txt?
  *   IdleObsPackage.validate(opts) -> [problem strings]  [] when build() will succeed
  *
- * The contract, field by field, is in gates/PLAN-obs-package.md.
+ * The contract, field by field, is in gates/PLAN-obs-package.md. Since L6 a
+ * logo always ships as its own page, logo.html, which the streamer adds as a
+ * second Browser source and moves and scales in OBS. obs.html carries the
+ * logo as well only when opts.logo.inFigure is true.
  *
  * Why a separate, pure file and not code inside studio.js: a package is
  * handed to a person who has no repo, no Python and no server, and opens
@@ -131,6 +134,31 @@
     };
   }
 
+  /* logo.html: the logo box sits inside the viewport with a margin on every
+   * side, so the glow (logoAtem's widest drop-shadow has an 18px blur) is
+   * painted inside the source and not cut at its edge. Two insets add up,
+   * without calc(): a fixed LOGO_PAD_PX for the shadow, then LOGO_PAD_PCT of
+   * what is left, which keeps a little air around the logo at any size. */
+  var LOGO_PAD_PX = 32;
+  var LOGO_PAD_PCT = 3;
+  var LOGO_SOURCE_LONG = 800;
+
+  /* The OBS source size ANLEITUNG.txt suggests for logo.html: the longer
+   * side is 800, and the other side is chosen so the box inside both insets
+   * has exactly the logo's aspect. The padding is the same on both axes, so
+   * a very wide or very tall logo still gets its full length and a source
+   * that is never thinner than the two margins. */
+  function logoSourceSize(aspect) {
+    var pad = 2 * LOGO_PAD_PX;
+    var inner = LOGO_SOURCE_LONG - pad;
+    if (aspect >= 1) return { width: LOGO_SOURCE_LONG, height: Math.round(inner / aspect + pad) };
+    return { width: Math.round(inner * aspect + pad), height: LOGO_SOURCE_LONG };
+  }
+
+  function logoInFigure(logo) {
+    return !!logo && logo.inFigure === true;
+  }
+
   function startStateOf(opts) {
     return (typeof opts.startState === 'string' && opts.startState) ? opts.startState : 'neutral';
   }
@@ -188,7 +216,7 @@
         if (!isNum(logo.x) || logo.x < 0 || logo.x > 1) p.push('logo.x must be between 0 and 1');
         if (!isNum(logo.y) || logo.y < 0 || logo.y > 1) p.push('logo.y must be between 0 and 1');
         if (!isNum(logo.width) || logo.width <= 0 || logo.width > 1) p.push('logo.width must be above 0 and at most 1');
-        var flags = ['wipe', 'glow', 'gleam'];
+        var flags = ['wipe', 'glow', 'gleam', 'inFigure'];
         for (var i = 0; i < flags.length; i++) {
           var fv = logo[flags[i]];
           if (fv !== undefined && typeof fv !== 'boolean') p.push('logo.' + flags[i] + ' must be true or false');
@@ -416,6 +444,8 @@
 
   /* ------------------------------------------------------------------ *
    * The logo, ported from GH_Loading_Screen/index.html (logo block).
+   * One generator for both pages that show it: obs.html (inFigure) and
+   * logo.html.
    *
    * Two elements, and that is load-bearing: .logo carries only the glow
    * (filter: drop-shadow). A mask on the same element would clip the glow at
@@ -647,7 +677,9 @@
     delete figure.backgroundZoom;
     delete figure.sources;
 
-    var logo = opts.logo || null;
+    /* Without inFigure the logo lives in logo.html only, and this page is
+     * byte for byte the page of a package without a logo. */
+    var logo = logoInFigure(opts.logo) ? opts.logo : null;
     var credit = textOf(opts.credit);
     var name = displayName(opts.name);
     var license = opts.license === 'CC-BY-4.0' ? 'CC BY 4.0' : '';
@@ -661,7 +693,7 @@
       '<!--',
       '  ' + htmlText(name) + ' for OBS Studio. Open this file as a Browser source with "Local file".',
       credit ? '  Figure: ' + htmlText(name) + ' by ' + htmlText(credit) + (license ? ', ' + license + ' (see LICENSE.txt)' : '') + '.' : '',
-      '  Player code: idle-web-animation, Copyright (c) 2026 Daniel Broening, MIT License.',
+      '  Player code: idle-web-animation, MIT License.',
       opts.date ? '  Built ' + opts.date + '.' : '',
       '-->',
       '<html lang="de">',
@@ -720,6 +752,59 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * logo.html
+   *
+   * The logo alone, as its own OBS Browser source, so the streamer moves,
+   * scales and crops it in OBS instead of rebuilding the package. CSS only:
+   * the same logoCss() as inside obs.html, the same effects, the same glow
+   * period, the same reduced-motion block. The box fills the viewport inside
+   * two insets (see LOGO_PAD_PX), and background-size: contain keeps the
+   * logo whole in a source of any aspect.
+   * ------------------------------------------------------------------ */
+
+  function buildLogoHtml(opts) {
+    var logo = opts.logo;
+    var credit = textOf(opts.credit);
+    var name = displayName(opts.name);
+    var license = opts.license === 'CC-BY-4.0' ? 'CC BY 4.0' : '';
+    var pct = LOGO_PAD_PCT + '%';
+    var px = LOGO_PAD_PX + 'px';
+
+    var lines = [
+      '<!doctype html>',
+      '<!--',
+      '  Logo for ' + htmlText(name) + ' in OBS Studio. Open this file as a second Browser source with "Local file".',
+      credit ? '  Figure: ' + htmlText(name) + ' by ' + htmlText(credit) + (license ? ', ' + license + ' (see LICENSE.txt)' : '') + '.' : '',
+      license ? '  The logo is not under the figure\'s licence.' : '',
+      '  Page code: idle-web-animation, MIT License.',
+      opts.date ? '  Built ' + opts.date + '.' : '',
+      '-->',
+      '<html lang="de">',
+      '<head>',
+      '<meta charset="utf-8">',
+      credit ? '<meta name="author" content="' + htmlText(credit) + '">' : '',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      '<title>' + htmlText(name) + ' Logo</title>',
+      '<style>',
+      /* Transparent like obs.html: anything else shows as a rectangle. */
+      'html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }',
+      '.logo-frame { position: absolute; top: ' + px + '; right: ' + px + '; bottom: ' + px + '; left: ' + px + '; }',
+      '.logo-frame .logo { top: ' + pct + '; right: ' + pct + '; bottom: ' + pct + '; left: ' + pct + '; }',
+      tagSafe('style', logoCss(logo, glowPeriodOf(opts.figure, logo))),
+      '</style>',
+      '</head>',
+      '<body>',
+      '<div class="logo-frame"><div class="logo" aria-hidden="true"><div class="logo-inner"></div></div></div>',
+      '</body>',
+      '</html>',
+      ''
+    ];
+    var out = [];
+    for (var i = 0; i < lines.length; i++) if (lines[i] !== '') out.push(lines[i]);
+    return out.join('\n') + '\n';
+  }
+
+  /* ------------------------------------------------------------------ *
    * ANLEITUNG.txt and LICENSE.txt
    * ------------------------------------------------------------------ */
 
@@ -747,7 +832,10 @@
     t.push('WAS IN DIESEM ORDNER LIEGT', '');
     t.push('obs.html       die Figur. Diese Datei öffnest du in OBS.');
     t.push('layers         die Bilder der Figur.');
-    if (logo) t.push(logo.file + (logo.file.length < 14 ? new Array(15 - logo.file.length).join(' ') : ' ') + ' das Logo.');
+    if (logo) {
+      t.push('logo.html      das Logo als eigene Quelle in OBS.');
+      t.push(logo.file + (logo.file.length < 14 ? new Array(15 - logo.file.length).join(' ') : ' ') + ' das Logo als Bild.');
+    }
     t.push('ANLEITUNG.txt  diese Anleitung.');
     if (hasLicense) t.push('LICENSE.txt    die Lizenz der Bilder.');
     t.push('');
@@ -781,6 +869,51 @@
     t.push('Den Hintergrund musst du nicht einstellen. Die Seite ist durchsichtig.');
     t.push('Ohne die zwei Haken startet die Figur nicht bei jedem Szenenwechsel neu.');
     t.push('');
+
+    if (logo) {
+      var ls = logoSourceSize(logo.aspect);
+      t.push('DAS LOGO ALS EIGENE QUELLE', '');
+      if (logoInFigure(logo)) {
+        t.push('Das Logo steckt schon in obs.html.');
+        t.push('Diese zweite Quelle brauchst du nur,');
+        t.push('wenn du das Logo getrennt verschieben willst.');
+        t.push('Dann hast du es zweimal im Bild.');
+      } else {
+        t.push('Das Logo ist nicht in obs.html.');
+        t.push('Es bekommt eine eigene Quelle.');
+        t.push('So verschiebst und skalierst du es in OBS, wie du willst.');
+      }
+      t.push('');
+      t.push('1. Klicke unter "Quellen" (Sources) auf das Plus.');
+      t.push('2. Wähle "Browser".');
+      t.push('3. Gib den Namen "Logo" ein.');
+      t.push('   Klicke auf "OK".');
+      t.push('4. Setze den Haken bei "Lokale Datei" (Local file).');
+      t.push('5. Klicke auf "Durchsuchen" (Browse).');
+      t.push('   Wähle logo.html aus diesem Ordner.');
+      t.push('6. Breite (Width): ' + ls.width);
+      t.push('7. Höhe (Height): ' + ls.height);
+      t.push('8. Kein Haken bei "Quelle herunterfahren, wenn nicht sichtbar"');
+      t.push('   (Shutdown source when not visible).');
+      t.push('9. Kein Haken bei "Browser aktualisieren, wenn Szene aktiv wird"');
+      t.push('   (Refresh browser when scene becomes active).');
+      t.push('10. Klicke auf "OK".');
+      t.push('');
+      t.push('So passt du das Logo an:');
+      t.push('- Verschieben: Ziehe das Logo in der Vorschau mit der Maus.');
+      t.push('- Größe: Ziehe an den roten Ecken des Rahmens.');
+      t.push('- Zuschneiden: Halte Alt gedrückt und ziehe an einer roten Kante.');
+      t.push('- Reihenfolge: "Logo" steht in der Liste "Quellen" über der Figur.');
+      t.push('  Sonst verdeckt die Figur das Logo.');
+      t.push('');
+      t.push('Um das Logo ist ein Rand frei. Dort leuchtet der Schein.');
+      t.push('Schneide diesen Rand nicht weg.');
+      t.push('');
+      t.push('Ohne Animation geht es auch:');
+      t.push('Wähle in Schritt 2 "Bild" (Image) statt "Browser".');
+      t.push('Wähle dann die Datei ' + logo.file + ' aus diesem Ordner.');
+      t.push('');
+    }
 
     t.push('STIMMUNGEN', '');
     if (moods.length) {
@@ -847,7 +980,8 @@
     }
     if (logo) {
       t.push('Das Logo fehlt:');
-      t.push('  Liegt ' + logo.file + ' neben obs.html?');
+      t.push('  Liegt ' + logo.file + ' im selben Ordner wie logo.html?');
+      t.push('  Steht "Logo" in der Liste "Quellen" über der Figur?');
     }
     t.push('Nichts bewegt sich:');
     t.push('  OBS 28 oder neuer? Hilfe > Über (Help > About).');
@@ -881,8 +1015,8 @@
       t.push('- das Logo (' + logo.file + '). Es ist das Zeichen seines Inhabers');
       t.push('  und steht nicht unter CC BY 4.0, außer der Inhaber sagt es ausdrücklich.');
     }
-    t.push('- der Programmcode in obs.html. Er stammt aus idle-web-animation,');
-    t.push('  Copyright (c) 2026 Daniel Broening, MIT License.');
+    t.push('- der Programmcode in ' + (logo ? 'obs.html und logo.html' : 'obs.html') + ':');
+    t.push('  idle-web-animation, MIT License.');
     t.push('');
     t.push('ENGLISH', '');
     t.push('The pictures of this figure (the folder "layers") are by');
@@ -900,8 +1034,8 @@
       t.push('- the logo (' + logo.file + '). It is its owner\'s mark and is not');
       t.push('  under CC BY 4.0 unless the owner says so.');
     }
-    t.push('- the program code in obs.html, from idle-web-animation,');
-    t.push('  Copyright (c) 2026 Daniel Broening, MIT License.');
+    t.push('- the program code in ' + (logo ? 'obs.html and logo.html' : 'obs.html') + ':');
+    t.push('  idle-web-animation, MIT License.');
     t.push('');
     return t.join('\r\n') + '\r\n';
   }
@@ -909,10 +1043,9 @@
   function build(opts) {
     var problems = validate(opts);
     if (problems.length) throw new Error('IdleObsPackage.build: ' + problems.join('; '));
-    var files = [
-      { name: 'obs.html', text: buildHtml(opts) },
-      { name: 'ANLEITUNG.txt', text: buildGuide(opts) }
-    ];
+    var files = [{ name: 'obs.html', text: buildHtml(opts) }];
+    if (opts.logo) files.push({ name: 'logo.html', text: buildLogoHtml(opts) });
+    files.push({ name: 'ANLEITUNG.txt', text: buildGuide(opts) });
     if (opts.license === 'CC-BY-4.0') files.push({ name: 'LICENSE.txt', text: buildLicense(opts) });
     return files;
   }
@@ -923,6 +1056,7 @@
     /* Exposed for the studio's live preview and for tools/test-addons.mjs,
      * so neither has to compute the box or the period a second way. */
     logoBox: logoBox,
+    logoSourceSize: logoSourceSize,
     glowPeriod: glowPeriodOf,
     stateNames: stateNamesOf,
     _stripJs: stripJs,

@@ -207,6 +207,11 @@ The zip holds `obs.html` (figure, player and scene glue all inline),
 and the figure's real width and height, and `LICENSE.txt` when a licence is
 chosen. The figure's background is never packed; the page is transparent.
 
+A logo also ships as `logo.html`, a transparent CSS-only page with just the
+logo and its effects, added as a second Browser source so it can be moved,
+scaled and cropped in OBS; `ANLEITUNG.txt` gives its source size. Tick
+**logo inside figure** in the studio to bake it into `obs.html` as well.
+
 Moods and scene names work as in Part A. The camera avatar does not: it needs
 the server. The builder is `package.js`, tested by `node tools/test-addons.mjs`.
 

@@ -220,6 +220,12 @@ html, body {
   pointer-events: none;
 }
 
+/* logo X / Y / width only place the logo inside obs.html. With "logo inside
+ * figure" off they mean nothing, so they grey out (the class is set by
+ * syncObsLogoInFigure() in studio.js; :has() is newer than Chromium 103). */
+.slider.off { opacity: 0.45; }
+.slider input:disabled { cursor: not-allowed; }
+
 /* ---------------- transport ---------------- */
 
 .transport {

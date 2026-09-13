@@ -119,16 +119,17 @@ nach unten:
 
 | Feld im Studio | Was du tust |
 |---|---|
-| **Logo…** | Klicke darauf und wähle ein Bild: PNG, WebP oder JPEG. Das Logo erscheint sofort auf der Bühne. Ohne Logo lässt du das Feld leer. |
+| **Logo…** | Klicke darauf und wähle ein Bild: PNG, WebP oder JPEG. Ohne Logo lässt du das Feld leer. |
 | **Remove logo** | Nimmt das Logo wieder heraus. Der Knopf erscheint erst, wenn ein Logo gewählt ist. |
-| **logo X** | Schiebt das Logo nach links (0) oder rechts (1). Der Wert ist die Mitte des Logos. |
-| **logo Y** | Schiebt das Logo nach oben (0) oder unten (1). |
-| **logo width** | Die Breite des Logos als Anteil der Figurenbreite. 0.34 heißt: ein gutes Drittel. Die Höhe folgt von selbst, das Logo wird nie verzerrt. |
+| **logo inside figure** | Ohne Haken (so startet das Studio) kommt das Logo nur als eigene Quelle `logo.html` ins Paket. Du verschiebst und skalierst es dann in OBS (Teil C, Schritt 4). Mit Haken steckt das Logo zusätzlich fest in `obs.html`, an der Stelle aus **logo X**, **logo Y** und **logo width**, und erscheint als Vorschau auf der Bühne. |
+| **logo X** | Nur mit Haken bei **logo inside figure**, sonst grau. Schiebt das Logo in `obs.html` nach links (0) oder rechts (1). Der Wert ist die Mitte des Logos. |
+| **logo Y** | Nur mit Haken bei **logo inside figure**. Schiebt das Logo in `obs.html` nach oben (0) oder unten (1). |
+| **logo width** | Nur mit Haken bei **logo inside figure**. Die Breite des Logos in `obs.html` als Anteil der Figurenbreite. 0.34 heißt: ein gutes Drittel. Die Höhe folgt von selbst, das Logo wird nie verzerrt. |
 | **wipe-in** | Das Logo wischt beim Start von links nach rechts ins Bild. Ein heller Lichtstreifen läuft auf der Kante mit. Ohne Haken ist das Logo sofort da. |
 | **glow** | Das Logo glimmt im Takt des Atems der Figur. Hat die Figur keinen Atem, glimmt es alle 4,2 Sekunden. |
 | **gleam** | Alle 9 Sekunden läuft ein Glanzstreifen über das Logo. |
 | **start mood** | Die Stimmung, mit der die Figur startet. Sie gilt auch für jede Szene ohne Stimmungswort im Namen (Teil D). |
-| **credit** | Wer die Figur gezeichnet hat, zum Beispiel `Dan Enso (@danenso)`. Das Studio merkt sich den Text auf diesem Rechner. |
+| **credit** | Wer die Figur gezeichnet hat, zum Beispiel `Max Muster (@maxmuster)`. Das Studio merkt sich den Text auf diesem Rechner. |
 | **licence** | `none` oder `CC BY 4.0`. Mit `CC BY 4.0` brauchst du einen Eintrag bei **credit** (Teil F). |
 | **OBS package (zip)** | Baut das Paket und lädt es herunter. |
 
@@ -137,7 +138,7 @@ ein und aus. Meldet das System „Bewegung reduzieren", zeigt die Seite das
 Logo sofort und ohne Effekte.
 
 **credit** und **licence** erscheinen nie im Bild. Sie stehen nur im
-Quelltext von `obs.html` und in den Textdateien des Pakets.
+Quelltext von `obs.html` und `logo.html` und in den Textdateien des Pakets.
 
 Unter dem Knopf steht eine Zeile mit dem Ergebnis. Fehlt etwas, steht dort,
 was.
@@ -150,7 +151,8 @@ Die Datei heißt `<figur>-obs.zip`, zum Beispiel `pedro-obs.zip`. Darin:
 |---|---|
 | `obs.html` | die Figur. Das Abspielprogramm steckt mit in dieser Datei. |
 | `layers/` | die Bilder der Figur, in der gewählten Größe |
-| `logo.webp` (oder `.png`, `.jpg`) | dein Logo, nur wenn du eins gewählt hast |
+| `logo.html` | das Logo als eigene OBS-Quelle mit den gewählten Effekten, nur mit Logo |
+| `logo.webp` (oder `.png`, `.jpg`) | dein Logo als Bild, nur wenn du eins gewählt hast |
 | `ANLEITUNG.txt` | die Kurzanleitung für den Empfänger, mit der echten Breite und Höhe und den Stimmungen dieser Figur |
 | `LICENSE.txt` | nur mit Lizenz: wem die Bilder gehören und was CC BY 4.0 erlaubt |
 
@@ -198,6 +200,47 @@ Verschiebst du später den ganzen Ordner, stellst du den Pfad in OBS neu ein.
 Die Figur steht jetzt durchsichtig in deiner Szene.
 Ziehe die Quelle größer oder kleiner wie jede andere Quelle.
 Die Figur passt sich an und wird nie verzerrt.
+
+### 4. Das Logo als eigene Quelle
+
+Nur für ein Paket mit Logo. Das Logo liegt als `logo.html` im Ordner. Als
+eigene Quelle verschiebst und skalierst du es frei.
+
+Wurde das Paket mit **logo inside figure** gebaut, steckt das Logo schon in
+`obs.html`. Dann brauchst du diese Quelle nur, wenn du das Logo getrennt
+bewegen willst. `ANLEITUNG.txt` sagt dir, welcher Fall gilt.
+
+1. Klicke in OBS unter **Quellen** (Sources) auf **+**.
+2. Wähle **Browser**.
+3. Gib den Namen `Logo` ein und klicke auf **OK**.
+4. Setze den Haken bei **Lokale Datei** (Local file).
+5. Klicke auf **Durchsuchen** (Browse).
+6. Wähle `logo.html` im selben Ordner wie `obs.html`.
+7. Trage bei **Breite** (Width) und **Höhe** (Height) die Zahlen aus
+   `ANLEITUNG.txt` ein. Die lange Seite ist `800`, die andere folgt aus der
+   Form des Logos. Für ein Logo im Format 1948 × 1208 sind das `800` und
+   `520`.
+8. Kein Haken bei **Quelle herunterfahren, wenn nicht sichtbar**
+   (Shutdown source when not visible).
+9. Kein Haken bei **Browser aktualisieren, wenn Szene aktiv wird**
+   (Refresh browser when scene becomes active).
+10. Klicke auf **OK**.
+
+So passt du das Logo an:
+
+- **Verschieben:** Ziehe das Logo in der Vorschau mit der Maus.
+- **Größe:** Ziehe an den roten Ecken des Rahmens.
+- **Zuschneiden:** Halte **Alt** gedrückt und ziehe an einer roten Kante.
+- **Reihenfolge:** `Logo` steht in der Liste **Quellen** über der Figur.
+  Sonst verdeckt die Figur das Logo.
+
+Um das Logo ist in `logo.html` ein Rand frei. Dort leuchtet der Schein von
+**glow**. Schneide diesen Rand nicht weg, sonst endet der Schein an einer
+harten Kante.
+
+**Ohne Animation:** Wähle in Schritt 2 **Bild** (Image) statt **Browser**
+und dann die Logo-Datei aus dem Ordner, zum Beispiel `logo.webp`. Das Logo
+steht dann still, ohne **wipe-in**, **glow** und **gleam**.
 
 ---
 
@@ -292,13 +335,13 @@ Die Figur zeigt den Namen nie selbst an. Schreibe ihn an eine dieser Stellen:
 Ein Beispiel zum Kopieren:
 
 ```text
-Figur: Pedro von Dan Enso (@danenso), CC BY 4.0
+Figur: Pedro von Max Muster (@maxmuster), CC BY 4.0
 ```
 
 Mit Link zur Lizenz, wo Links möglich sind:
 
 ```text
-Figur: Pedro von Dan Enso (@danenso), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Figur: Pedro von Max Muster (@maxmuster), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 ```
 
 Den passenden Satz für dein Paket findest du fertig in `ANLEITUNG.txt`.
@@ -310,8 +353,8 @@ dazulegst, bleibt das Zeichen seines Inhabers. Es steht **nicht** unter
 CC BY 4.0, außer der Inhaber sagt das ausdrücklich. Wer dein Paket bekommt,
 darf das Logo also nicht einfach für eigene Zwecke nutzen.
 
-Das Abspielprogramm in `obs.html` steht unter der MIT-Lizenz dieses
-Projekts. `LICENSE.txt` im Paket nennt beides.
+Das Abspielprogramm in `obs.html` und der Code in `logo.html` stehen unter
+der MIT-Lizenz dieses Projekts. `LICENSE.txt` im Paket nennt beides.
 
 ---
 
@@ -326,8 +369,9 @@ Projekts. `LICENSE.txt` im Paket nennt beides.
 | Die Figur beginnt bei jedem Szenenwechsel von vorn | Entferne die Haken bei **Quelle herunterfahren, wenn nicht sichtbar** und **Browser aktualisieren, wenn Szene aktiv wird**. |
 | Die Stimmung wechselt nicht | Steht das Wort genau so im Szenennamen, als eigenes Wort? Prüfe die Seitenberechtigung (Teil D). |
 | Die Stimmung wechselt erst bei der nächsten Szene | Stelle die Seitenberechtigung auf **Read access to user information** (Teil D). |
-| Das Logo fehlt | Liegt die Logo-Datei neben `obs.html`? Hast du sie umbenannt? Der Name muss genau so bleiben. |
-| Das Logo steht falsch | Baue das Paket neu und ändere **logo X**, **logo Y** und **logo width**. Die Vorschau auf der Bühne zeigt die Stelle. |
+| Das Logo fehlt | Hast du die Quelle `Logo` angelegt (Teil C, Schritt 4)? Steht sie in der Liste **Quellen** über der Figur? Liegt die Logo-Datei neben `logo.html`? Hast du sie umbenannt? Der Name muss genau so bleiben. |
+| Das Logo steht falsch | Als eigene Quelle: Verschiebe und skaliere es in OBS. Steckt es in `obs.html` (**logo inside figure**): Baue das Paket neu und ändere **logo X**, **logo Y** und **logo width**. Die Vorschau auf der Bühne zeigt die Stelle. |
+| Der Schein um das Logo ist abgeschnitten | Trage **Breite** und **Höhe** aus `ANLEITUNG.txt` ein und schneide den freien Rand um das Logo nicht weg. |
 | Das Logo erscheint ohne Animation | Sind **wipe-in**, **glow** und **gleam** angehakt? Wenn ja: Das System meldet vermutlich „Bewegung reduzieren". In Windows heißt das **Animationseffekte** unter **Einstellungen > Barrierefreiheit > Visuelle Effekte**. Die Seite nimmt darauf Rücksicht. |
 | Der Knopf **OBS package (zip)** meldet einen Fehler | Lies die Zeile darunter. Oft fehlt bei `CC BY 4.0` der **credit**. |
 | Nichts bewegt sich | Prüfe die OBS-Version unter **Hilfe > Über** (Help > About). Du brauchst 28 oder neuer. Öffne die **Eigenschaften** der Quelle und klicke auf **Cache der aktuellen Seite aktualisieren** (Refresh cache of current page). |
