@@ -9,6 +9,10 @@
  * that tilt turns about the joint, that hidden wins over the eye roles, and
  * that a bad override falls back to the layer instead of turning into NaN.
  *
+ * Beside moods sit the live face inputs, ctx.blink and ctx.mouth: a camera
+ * page's blink has to beat the schedule and its anticipation, the mouth roles
+ * switch at 0.5, and a mood's pictures and hidden keep working with both.
+ *
  * Last, every figure on disk that has moods: no problems reported, and every
  * picture a mood swaps in exists. A missing file is a hole in the page that
  * only shows when that scene comes up on stream.
@@ -474,6 +478,263 @@ globalThis.document = { createElement: fakeEl };
   ok(p.setState('nope') === false && paused === 3, 'ein abgelehnter Name darf nicht neu zeichnen');
 }
 console.log('setState: unbekannt false, gleich unveraendert, from ist die Seite, die mehr zeigt.');
+
+/* --- 4b. live face input: ctx.blink and ctx.mouth ------------------------
+ *
+ * A camera page hands solve() how far the lids are down and how far the
+ * mouth is open. ctx.blink replaces the schedule of every blink motion, so it
+ * has to win inside a scheduled blink, in the widening before one, and when
+ * the blink motion sits on the head instead of the eyes. ctx.mouth drives the
+ * two mouth roles at one threshold. Both sit beside moods, so a mood's
+ * pictures and a mood's hidden have to keep working with them. */
+
+const face = () => ({
+  size: { width: 1000, height: 1000 },
+  motion: { stateSeconds: 0.5 },
+  layers: [
+    { id: 'kopf', src: 'kopf.webp', pivot: [0.5, 0.6], motions: [{ type: 'gaze' }] },
+    { id: 'auf', src: 'auf.webp', parent: 'kopf', role: 'eyesOpen', pivot: [0.5, 0.4],
+      motions: [{ type: 'blink' }] },
+    { id: 'zu', src: 'zu.webp', parent: 'kopf', role: 'eyesClosed', pivot: [0.5, 0.4],
+      motions: [{ type: 'blink' }] },
+    { id: 'mund-auf', src: 'mund-auf.webp', parent: 'kopf', role: 'mouthOpen', pivot: [0.5, 0.7] },
+    { id: 'mund-zu', src: 'mund-zu.webp', parent: 'kopf', role: 'mouthClosed', pivot: [0.5, 0.7] }
+  ]
+});
+const byIdOf = (st) => Object.fromEntries(st.map(s => [s.id, s]));
+const faceAt = (fig, t, ctx) => byIdOf(Idle.solve(fig, t, ctx));
+const withoutBlink = (fig) => {
+  const f = clone(fig);
+  for (const L of f.layers) if (L.motions) L.motions = L.motions.filter(m => m.type !== 'blink');
+  return f;
+};
+/* Dense enough to land inside a 0.13 s blink and inside the 0.14 s widening
+ * before one: 60 s at 100 samples a second. */
+const DENSE = Array.from({ length: 6000 }, (_, i) => i / 100);
+const SPARSE = DENSE.filter((_, i) => i % 37 === 0);
+
+/* Where the schedule blinks, and where it widens without blinking yet, on a
+ * figure whose blink sits on `id`. Both lists must be non-empty, or every
+ * check below that uses them proves nothing. */
+function scheduleOf(fig, id, roleId) {
+  const bare = withoutBlink(fig);
+  const blinks = [], widens = [];
+  for (const t of DENSE) {
+    const s = faceAt(fig, t, {});
+    if (s[roleId].hidden) blinks.push(t);
+    else if (!same(s[id].matrix, faceAt(bare, t, {})[id].matrix)) widens.push(t);
+  }
+  ok(blinks.length > 0, `die Testfigur (blink auf ${id}) blinzelt in 60 s nie`);
+  ok(widens.length > 0, `die Testfigur (blink auf ${id}) weitet das Auge in 60 s nie vorab`);
+  return { bare, blinks, widens };
+}
+
+/* ctx.blink on the eye layers themselves. */
+{
+  const fig = face();
+  const { bare, blinks, widens } = scheduleOf(fig, 'auf', 'auf');
+
+  for (const t of SPARSE.concat(blinks, widens)) {
+    const s = faceAt(fig, t, { blink: 1 });
+    ok(s.auf.hidden === true && s.zu.hidden === false,
+       `ctx.blink 1 bei t=${t}: eyesOpen hidden=${s.auf.hidden}, eyesClosed hidden=${s.zu.hidden}`);
+    ok(s.auf.blink === 1 && s.zu.blink === 1, `ctx.blink 1 bei t=${t}: blink ist ${s.auf.blink}`);
+  }
+  for (const t of blinks) {
+    const s = faceAt(fig, t, { blink: 0 });
+    ok(s.auf.hidden === false && s.zu.hidden === true,
+       `ctx.blink 0 mitten im geplanten Blinzeln bei t=${t}: die Augen gehen trotzdem zu`);
+  }
+  /* No widening while the input is set: the eye layers sit exactly where
+   * they would with no blink motion at all, before, during and between. */
+  for (const t of widens.concat(blinks, SPARSE)) {
+    for (const v of [0, 0.3, 1]) {
+      const s = faceAt(fig, t, { blink: v }), b = faceAt(bare, t, {});
+      ok(same(s.auf.matrix, b.auf.matrix) && same(s.zu.matrix, b.zu.matrix),
+         `ctx.blink ${v} bei t=${t}: das Auge weitet sich trotzdem (sy ${s.auf.matrix[3]} statt ${b.auf.matrix[3]})`);
+    }
+  }
+  /* Undefined, and anything that is not a finite number, is the schedule to
+   * the bit - a tracker that loses the face hands back to the figure. */
+  const probe = [blinks[0], widens[0], 0, 7.77].concat(SPARSE.slice(0, 20));
+  for (const t of probe) {
+    const plain = JSON.stringify(Idle.solve(fig, t, {}));
+    for (const v of [undefined, null, NaN, Infinity, -Infinity, '1', '0', true, [1], {}]) {
+      ok(JSON.stringify(Idle.solve(fig, t, { blink: v })) === plain,
+         `ctx.blink ${String(v)} bei t=${t} muss genau den Zeitplan zeigen`);
+    }
+  }
+  /* Clamped, and 0.5 is still open, like the schedule's own threshold. */
+  const t0 = widens[0];
+  ok(JSON.stringify(Idle.solve(fig, t0, { blink: 7 })) === JSON.stringify(Idle.solve(fig, t0, { blink: 1 })),
+     'ctx.blink 7 muss wie 1 sein');
+  ok(JSON.stringify(Idle.solve(fig, t0, { blink: -3 })) === JSON.stringify(Idle.solve(fig, t0, { blink: 0 })),
+     'ctx.blink -3 muss wie 0 sein');
+  ok(faceAt(fig, t0, { blink: 0.5 }).auf.hidden === false, 'ctx.blink 0.5 muss die Augen offen lassen');
+  ok(faceAt(fig, t0, { blink: 0.5000001 }).auf.hidden === true, 'ctx.blink knapp ueber 0.5 muss die Augen schliessen');
+
+  const c = { blink: 7, mouth: -1 };
+  Idle.solve(fig, 1, c);
+  ok(same(c, { blink: 7, mouth: -1 }), 'solve hat ctx veraendert');
+}
+
+/* ctx.blink with the blink motion on the head only. The roles find it
+ * through the parent, and the head's own widening - the one that lifts a
+ * hat - stops too. */
+{
+  const fig = face();
+  fig.layers[0].motions.push({ type: 'blink' });
+  delete fig.layers[1].motions;
+  delete fig.layers[2].motions;
+  const { bare, blinks, widens } = scheduleOf(fig, 'kopf', 'auf');
+  for (const t of SPARSE.concat(blinks)) {
+    const s = faceAt(fig, t, { blink: 1 });
+    ok(s.auf.hidden === true && s.zu.hidden === false, `blink am Kopf, ctx.blink 1 bei t=${t}: Augen nicht zu`);
+  }
+  for (const t of blinks) {
+    const s = faceAt(fig, t, { blink: 0 });
+    ok(s.auf.hidden === false && s.zu.hidden === true, `blink am Kopf, ctx.blink 0 bei t=${t}: Augen gehen zu`);
+  }
+  for (const t of widens) {
+    const s = faceAt(fig, t, { blink: 0 }), b = faceAt(bare, t, {});
+    ok(same(s.kopf.matrix, b.kopf.matrix) && same(s.auf.matrix, b.auf.matrix),
+       `blink am Kopf, ctx.blink 0 bei t=${t}: der Kopf weitet sich trotzdem`);
+  }
+}
+
+/* A figure with no blink motion anywhere does not blink from the camera
+ * either: ctx.blink drives blink motions, and the roles read those. */
+{
+  const fig = withoutBlink(face());
+  const s = faceAt(fig, 3, { blink: 1 });
+  ok(s.auf.hidden === false && s.zu.hidden === true, 'ohne blink-Bewegung darf ctx.blink die Augen nicht schliessen');
+}
+
+/* ctx.mouth: one threshold, closed when not given, nothing else touched. */
+{
+  const fig = face();
+  const { blinks } = scheduleOf(fig, 'auf', 'auf');
+  for (const [v, open] of [[undefined, false], [0, false], [0.3, false], [0.5, false], [0.5000001, true],
+                           [0.8, true], [1, true], [7, true], [-2, false], [NaN, false], [Infinity, false],
+                           ['1', false], [null, false], [true, false]]) {
+    for (const t of [0, 2.5, blinks[0]]) {
+      const s = faceAt(fig, t, v === undefined ? {} : { mouth: v });
+      ok(s['mund-auf'].hidden === !open && s['mund-zu'].hidden === open,
+         `ctx.mouth ${String(v)} bei t=${t}: mouthOpen hidden=${s['mund-auf'].hidden}, mouthClosed hidden=${s['mund-zu'].hidden}`);
+    }
+  }
+  /* The mouth only hides and shows. Every matrix, and every layer without a
+   * mouth role, is the same at 0 and at 1. */
+  for (const t of SPARSE) {
+    const a = Idle.solve(fig, t, { mouth: 0 }), b = Idle.solve(fig, t, { mouth: 1 });
+    ok(a.every((s, i) => s.css === b[i].css && s.opacity === b[i].opacity &&
+                         (/^mouth/.test(s.role || '') || s.hidden === b[i].hidden)),
+       `ctx.mouth bei t=${t} hat mehr veraendert als die Mundrollen`);
+  }
+  /* Eyes and mouth are independent: a scheduled blink with the mouth open,
+   * a live blink with the mouth closed. */
+  const mid = faceAt(fig, blinks[0], { mouth: 1 });
+  ok(mid.auf.hidden === true && mid['mund-auf'].hidden === false, 'ctx.mouth stoert das geplante Blinzeln');
+  const shut = faceAt(fig, 2.5, { blink: 1 });
+  ok(shut['mund-zu'].hidden === false && shut['mund-auf'].hidden === true, 'ctx.blink bewegt den Mund');
+
+  /* A mouth layer that also carries a blink motion is still a mouth: the
+   * blink sets its blink level, and only the eye roles read that. */
+  const both = face();
+  both.layers[3].motions = [{ type: 'blink' }];
+  both.layers[4].motions = [{ type: 'blink' }];
+  for (const t of [blinks[0], 2.5]) {
+    const s = faceAt(both, t, { blink: 1, mouth: 1 });
+    ok(s['mund-auf'].hidden === false && s['mund-zu'].hidden === true,
+       `Mundebene mit blink-Bewegung bei t=${t}: das Blinzeln versteckt den offenen Mund`);
+    const q = faceAt(both, t, {});
+    ok(q['mund-auf'].hidden === true && q['mund-zu'].hidden === false,
+       `Mundebene mit blink-Bewegung bei t=${t}: das Blinzeln zeigt den offenen Mund`);
+  }
+}
+
+/* hidden beats the mouth roles, from the layer and from a mood; a mood that
+ * swaps only the closed mouth keeps neutral's open one; a blend switches
+ * the roles with the rest of the discrete state. */
+{
+  const fig = face();
+  fig.layers[4].hidden = true;
+  fig.states = {
+    grin: { 'mund-zu': { src: 'mund-zu-grin.webp' } },
+    stumm: { 'mund-auf': { hidden: true } },
+    offen: { 'mund-zu': { hidden: false } }
+  };
+  ok(same(Idle.checkStates(fig), []), `checkStates meldet auf der Gesichtsfigur: ${JSON.stringify(Idle.checkStates(fig))}`);
+
+  ok(faceAt(fig, 1, { mouth: 0 })['mund-zu'].hidden === true, 'hidden: true verliert gegen die Rolle mouthClosed');
+  ok(faceAt(fig, 1, { mouth: 1, state: 'stumm' })['mund-auf'].hidden === true,
+     'hidden: true einer Stimmung verliert gegen die Rolle mouthOpen');
+  ok(faceAt(fig, 1, { mouth: 1, state: 'offen' })['mund-zu'].hidden === true,
+     'hidden: false einer Stimmung muss die Rolle mouthClosed trotzdem gelten lassen');
+  ok(faceAt(fig, 1, { mouth: 0, state: 'offen' })['mund-zu'].hidden === false,
+     'hidden: false einer Stimmung zeigt den geschlossenen Mund nicht wieder');
+
+  const g = clone(fig);
+  delete g.layers[4].hidden;
+  const open = faceAt(g, 1, { mouth: 1, state: 'grin' });
+  const closed = faceAt(g, 1, { mouth: 0, state: 'grin' });
+  ok(open['mund-auf'].hidden === false && open['mund-auf'].src === 'mund-auf.webp' && open['mund-zu'].hidden === true,
+     `grin mit offenem Mund muss den offenen Mund von neutral zeigen: ${JSON.stringify(open['mund-auf'])}`);
+  ok(same(Idle.imageOf(g.layers[3], open['mund-auf'], g).src, 'mund-auf.webp'),
+     'imageOf zeigt unter grin nicht den offenen Mund von neutral');
+  ok(closed['mund-zu'].hidden === false && closed['mund-zu'].src === 'mund-zu-grin.webp',
+     `grin mit geschlossenem Mund muss mund-zu-grin zeigen: ${JSON.stringify(closed['mund-zu'])}`);
+
+  /* stateSeconds 0.5, since 10: 10.1 is a fifth in, 10.4 four fifths. */
+  for (const [t, side] of [[10.1, 'neutral'], [10.4, 'stumm']]) {
+    for (const input of [{ mouth: 1 }, { mouth: 0 }, { mouth: 1, blink: 1 }, { blink: 0 }]) {
+      const blend = byIdOf(Idle.solve(g, t, Object.assign({ state: { from: 'neutral', to: 'stumm', since: 10 } }, input)));
+      const plain = byIdOf(Idle.solve(g, t, Object.assign({ state: side }, input)));
+      for (const id of ['auf', 'zu', 'mund-auf', 'mund-zu']) {
+        ok(blend[id].hidden === plain[id].hidden,
+           `Mischung bei t=${t} mit ${JSON.stringify(input)}: ${id} hidden=${blend[id].hidden}, ${side} allein ${plain[id].hidden}`);
+      }
+    }
+  }
+}
+
+/* Both renderers and the player: drawFrame reads the mouth and blink from
+ * opts.ctx, IdleFigure passes its fields into ctx and leaves them undefined
+ * until a page sets them. */
+{
+  const fig = face();
+  const { blinks } = scheduleOf(fig, 'auf', 'auf');
+  const calls = [];
+  const gfx = { setTransform() {}, clearRect() {}, save() {}, restore() {},
+                drawImage(img) { calls.push(img); } };
+  const bank = {};
+  for (const L of fig.layers) bank[L.id] = [L.src].map(s => 'IMG:' + s);
+  const drawn = (ctx) => { calls.length = 0; Idle.drawFrame(gfx, fig, bank, 2.5, { ctx }); return calls.slice(); };
+  let d = drawn({});
+  ok(d.includes('IMG:mund-zu.webp') && !d.includes('IMG:mund-auf.webp'), `drawFrame ohne mouth: ${d}`);
+  d = drawn({ mouth: 1 });
+  ok(d.includes('IMG:mund-auf.webp') && !d.includes('IMG:mund-zu.webp'), `drawFrame mit mouth 1: ${d}`);
+  d = drawn({ blink: 1 });
+  ok(d.includes('IMG:zu.webp') && !d.includes('IMG:auf.webp'), `drawFrame mit blink 1: ${d}`);
+
+  const p = new Idle.IdleFigure(fakeEl('div'), fig, '', { background: false });
+  ok(p.blink === undefined && p.mouth === undefined, 'ein neuer Spieler hat blink oder mouth schon gesetzt');
+  const t = blinks[0];
+  ok(JSON.stringify(p.render(t)) === JSON.stringify(Idle.solve(fig, t, { pointerX: 0, pointerY: 0, state: 'neutral' })),
+     'render ohne blink und mouth zeigt nicht den Zeitplan');
+  p.blink = 0;
+  p.mouth = 1;
+  ok(JSON.stringify(p.render(t)) === JSON.stringify(Idle.solve(fig, t, { blink: 0, mouth: 1 })),
+     'render gibt blink und mouth nicht an solve weiter');
+  const vis = (id) => p._nodes[id].box.style.opacity > 0.001;
+  ok(vis('auf') && !vis('zu') && vis('mund-auf') && !vis('mund-zu'),
+     `render mit blink 0, mouth 1 zeigt auf=${vis('auf')} zu=${vis('zu')} mund-auf=${vis('mund-auf')} mund-zu=${vis('mund-zu')}`);
+  p.blink = 1;
+  p.mouth = undefined;
+  p.render(2.5);
+  ok(!vis('auf') && vis('zu') && !vis('mund-auf') && vis('mund-zu'), 'render mit blink 1, mouth undefined stimmt nicht');
+}
+console.log('Gesicht: ctx.blink ersetzt den Zeitplan samt Vorweiten, auch am Kopf; ctx.mouth schaltet bei 0.5; hidden gewinnt.');
 
 /* --- 5. every figure on disk with moods ---------------------------------- */
 

@@ -89,7 +89,14 @@ pupil as its child with a small `gaze`; the open lids with
 `"role": "eyesOpen"`; the closed lids with `"role": "eyesClosed"`, which have
 to be drawn because a picture with open eyes does not contain them. `blink`
 sits on both eye layers. Cut the eye box out of the head layer, or the painted
-eyes show through.
+eyes show through. A camera page sets `figure.blink` from 0 to 1 instead;
+the schedule stops while it is set and resumes when it is `undefined` again.
+
+**Mouth.** Two full-canvas layers parented to the head, no motion: the closed
+mouth with `"role": "mouthClosed"`, the open one with `"role": "mouthOpen"`,
+drawn because a closed mouth does not contain an open one. Cut the mouth out
+of the head layer like the eyes. Only `ctx.mouth` (a page's `figure.mouth`)
+opens it, above 0.5; without it the mouth stays closed.
 
 **A face with no lids.** A mask or a skull blinks by its light going out:
 lit lenses as a `screen` copy with `glow` and role `eyesOpen`, dark glass

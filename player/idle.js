@@ -143,8 +143,19 @@
     },
 
     /* Blinking. Deterministic schedule, occasional double blink, and a hint
-     * of widening just before the lid drops - principle 2, anticipation. */
+     * of widening just before the lid drops - principle 2, anticipation.
+     *
+     * env.blink is a live input - a camera watching the streamer's eyes -
+     * and when it is there it IS the blink: the schedule is not consulted.
+     * The widening goes too, not just the lid. Anticipation is the figure
+     * guessing that a blink is coming; with a real eye on the other end
+     * there is nothing to guess, and a widening driven by the schedule would
+     * twitch the eye 140 ms before a blink the person never made. */
     blink: function (t, cfg, layer, env, out) {
+      if (env.blink >= 0) {
+        out.blink = Math.max(out.blink, env.blink);
+        return;
+      }
       var iv = pos(cfg.interval, 4.2);
       var dur = pos(cfg.duration, 0.13);
       var i = Math.floor(t / iv);
@@ -400,7 +411,8 @@
    *
    * A mood is an input, like the pointer. It is not a pose on a timeline:
    * nothing here keyframes anything, and solve() stays a pure function of
-   * its arguments - time plus ctx.pointerX, ctx.pointerY and ctx.state.
+   * its arguments - time plus ctx.pointerX, ctx.pointerY, ctx.state, and the
+   * live face inputs ctx.blink and ctx.mouth.
    *
    * A mood lists only what differs from the layers as written ("neutral"),
    * and only from a short list of keys: the picture (`src`, `crop`), a
@@ -763,7 +775,11 @@
    * which frame or picture shows, the blink and charge levels the roles read.
    * Half a picture is not a thing a layer can show. Position and motion carry
    * the change smoothly, so the swap lands inside a movement already under
-   * way, which is where a cut hides best. */
+   * way, which is where a cut hides best.
+   *
+   * ctx.blink and ctx.mouth need nothing here. Both sides were solved with
+   * the same ctx, so a live blink or mouth is the same number on each, and
+   * the roles they drive only differ where a mood's own `hidden` does. */
   function mixStates(a, b, w) {
     var out = [];
     var late = w >= 0.5;
@@ -807,7 +823,17 @@
       width: width,
       height: height,
       pointerX: num(ctx.pointerX, 0),
-      pointerY: num(ctx.pointerY, 0)
+      pointerY: num(ctx.pointerY, 0),
+      /* Live face input, see IdleFigure#blink. -1 means "not given", which
+       * the blink motion reads as "run your own schedule": a figure nobody
+       * feeds a camera to takes exactly the path it always took. A string,
+       * NaN or Infinity counts as not given, the same way num() treats a bad
+       * pointer - a tracker that loses the face and reports NaN must fall
+       * back to the schedule, not freeze the lids at whatever NaN compares as. */
+      blink: (typeof ctx.blink === 'number' && isFinite(ctx.blink)) ? clamp(ctx.blink, 0, 1) : -1,
+      /* The mouth has no schedule to fall back to, so "not given" is simply
+       * closed. */
+      mouth: clamp(num(ctx.mouth, 0), 0, 1)
     };
 
     var layers = figure.layers || [];
@@ -995,9 +1021,18 @@
       /* `hidden: true` wins over both roles. A mood that takes the lids away
        * altogether - a face with its eyes squeezed shut behind a hand - must
        * not have them flash back in on every blink. */
+      /* The mouth works the same way, on ctx.mouth instead of a motion: the
+       * open mouth shows only above half, the closed one at half and below,
+       * so exactly one of a pair is on screen at any value. One threshold and
+       * no memory of the last frame. A camera's mouth value hovering around
+       * 0.5 would flap the picture every frame; holding it steady needs two
+       * thresholds and the previous answer, and the previous answer is state
+       * solve() does not keep. The page that reads the camera keeps it. */
       state[i].hidden = hides[i] ||
                         (state[i].role === 'eyesOpen' && bl > 0.5) ||
-                        (state[i].role === 'eyesClosed' && bl <= 0.5);
+                        (state[i].role === 'eyesClosed' && bl <= 0.5) ||
+                        (state[i].role === 'mouthOpen' && env.mouth <= 0.5) ||
+                        (state[i].role === 'mouthClosed' && env.mouth > 0.5);
     }
 
     return state;
@@ -1026,6 +1061,19 @@
      * name, or a running blend. */
     this.state = 'neutral';
     this._stateMix = 'neutral';
+    /* Live face input, 0..1, for a page that reads a camera: `blink` is how
+     * far the lids are down, `mouth` how far the mouth is open. Both go into
+     * ctx on the next render(), like the pointer.
+     *
+     * Leave `blink` undefined and the figure keeps blinking on its own
+     * schedule; set it and the schedule stops, so a streamer who holds their
+     * eyes open is not overruled by a blink the figure invented. Set it back
+     * to undefined when the tracker loses the face. `mouth` undefined is a
+     * closed mouth. Smoothing and hysteresis are the page's job: solve() is a
+     * pure function and remembers nothing from the frame before. A paused
+     * figure does not redraw by itself when these change; call render(). */
+    this.blink = undefined;
+    this.mouth = undefined;
     this._raf = 0;
     this._gen = 0;
     this._nodes = {};
@@ -1158,7 +1206,8 @@
     var mix = this._stateMix;
     if (mix && typeof mix === 'object' && this.loop > 0) mix = mix.to;
     var st = solve(this.figure, t, {
-      pointerX: this.pointerX, pointerY: this.pointerY, state: mix
+      pointerX: this.pointerX, pointerY: this.pointerY, state: mix,
+      blink: this.blink, mouth: this.mouth
     });
     for (var i = 0; i < st.length; i++) {
       var s = st[i];
