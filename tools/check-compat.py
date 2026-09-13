@@ -26,6 +26,9 @@ TARGETS = [
     "addons/obs/figure.html",
     "addons/obs/scene.js",
     "addons/obs/face.js",
+    # package.js runs in the studio, and everything it writes into obs.html
+    # runs in OBS 28 to 30, which embed Chromium 103.
+    "addons/obs/package.js",
     # addons/obs/avatar.html is deliberately NOT in this list: it loads
     # MediaPipe and needs OBS 31+ / Chromium 127, well above the floor this
     # check enforces for everything else. See addons/obs/README.md. face.js

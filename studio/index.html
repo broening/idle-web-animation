@@ -337,6 +337,67 @@
         <code>figure.json</code> gets a <code>crop</code> saying where that
         part sits. The rig does not change; the decoded memory drops by an
         order of magnitude. The figures in this folder stay uncut.</p>
+
+        <p class="hint mt"><b>OBS package.</b> A second zip: the figure as
+        an OBS Browser source, no Python or server needed once it is handed
+        over &mdash; idle.js, idle.css and the scene script all ride along
+        inside one <code>obs.html</code>. The size above decides how big its
+        layers are too. The figure's own background never comes along; the
+        page stays transparent.</p>
+
+        <div class="row">
+          <label class="btn ghost file" id="obsLogoBtn"
+                 title="a picture to overlay on the figure, e.g. a stream logo">
+            Logo&hellip;
+            <input id="obsLogo" type="file"
+                   accept="image/png,image/webp,image/jpeg" hidden>
+          </label>
+          <button id="obsLogoRemove" class="btn ghost" type="button" hidden>
+            Remove logo
+          </button>
+        </div>
+
+        <label class="slider"><span>logo X</span>
+          <input id="obsLogoX" type="range" min="0" max="1" step="0.01" value="0.62">
+          <span id="obsLogoXVal" class="val">0.62</span>
+        </label>
+        <label class="slider"><span>logo Y</span>
+          <input id="obsLogoY" type="range" min="0" max="1" step="0.01" value="0.80">
+          <span id="obsLogoYVal" class="val">0.80</span>
+        </label>
+        <label class="slider"><span>logo width</span>
+          <input id="obsLogoW" type="range" min="0.05" max="1" step="0.01" value="0.34">
+          <span id="obsLogoWVal" class="val">0.34</span>
+        </label>
+
+        <div class="row">
+          <label class="chk"><input id="obsWipe" type="checkbox" checked> wipe-in</label>
+          <label class="chk"><input id="obsGlow" type="checkbox" checked> glow</label>
+          <label class="chk"><input id="obsGleam" type="checkbox"> gleam</label>
+        </div>
+
+        <label class="field"><span>start mood</span>
+          <select id="obsMood" class="sel"></select>
+        </label>
+        <label class="field"><span>credit</span>
+          <input id="obsCredit" class="txt" type="text" spellcheck="false"
+                 placeholder="Name (@handle)" autocomplete="off">
+        </label>
+        <label class="field"><span>licence</span>
+          <select id="obsLicense" class="sel">
+            <option value="">none</option>
+            <option value="CC-BY-4.0">CC BY 4.0</option>
+          </select>
+        </label>
+
+        <div class="row">
+          <button id="obsBtn" class="btn" type="button">OBS package (zip)</button>
+        </div>
+        <p id="obsOut" class="out"></p>
+
+        <p class="hint">Credit and licence never show on screen &mdash; they
+        sit in <code>obs.html</code>'s source, for the record. The credit
+        field is remembered on this computer, not saved into any figure.</p>
       </details>
 
       <details class="card">
