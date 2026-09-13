@@ -358,6 +358,10 @@ of them, and never depends on anything in this folder.
   driven by a webcam through MediaPipe Face Landmarker: it looks where you
   look, blinks when you blink, and can smile into a `happy` mood. See
   "Part B: avatar with camera" in `addons/obs/README.md`.
+- **OBS package** (`addons/obs/package.js`) - the studio's Export card packs a
+  figure into a zip that runs in OBS from a folder, no server needed, with an
+  optional logo and a credit line. See "Part C" in `addons/obs/README.md`; a
+  step-by-step guide in German is in `addons/obs/ANLEITUNG.md`.
 
 ## Build it with an AI agent
 

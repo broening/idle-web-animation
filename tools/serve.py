@@ -26,6 +26,7 @@ it is only local anyway" is how that stops being true.
 """
 import http.server
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -333,7 +334,10 @@ class Server(http.server.ThreadingHTTPServer):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5173
+    # An explicit argument wins, then PORT - which a launcher sets when 5173
+    # is already taken, for example by a second copy of this server that
+    # another tool started - then the studio's usual 5173.
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT") or 5173)
     server = Server(("127.0.0.1", port), Handler)
     print("Wurzel:  %s" % ROOT)
     print("Studio:  http://127.0.0.1:%d/studio/" % port)

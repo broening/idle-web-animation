@@ -152,6 +152,11 @@
     buildLayerCard();
     buildMotionControls();
     buildIouTruthList();
+    /* A logo picked for the last figure means nothing on this one - wrong
+     * canvas, wrong proportions - and the preview element belongs to a stage
+     * that is about to be torn down anyway. */
+    resetObsLogo();
+    buildObsMoodSelect();
     /* A mask belongs to one picture. Carrying it to the next figure
      * would paint marks over something they were never drawn on. */
     marks.parts = [];
@@ -744,6 +749,14 @@
     buildMotionControls();
     buildIouTruthList();
     refreshAddFrom();
+    /* Same reasoning as mountFigure(): a logo picked for a figure that no
+     * longer exists means nothing, and the mood select has to stop offering
+     * moods nobody can build a package for. state.fig is already gone above,
+     * so refreshLogoPreview() inside resetObsLogo() is a no-op past its own
+     * `!state.fig` guard - only the JS-side state and the button need
+     * clearing here. */
+    resetObsLogo();
+    buildObsMoodSelect();
     drawOverlay();
     refreshSaveState();
   }
@@ -1158,6 +1171,7 @@
     buildMoodCard();
     buildLayerCard();
     buildMotionControls();
+    buildObsMoodSelect();
     refreshStill();
     refreshSaveState();
   }
@@ -1950,6 +1964,10 @@
      * the zoom and pan have to be put back on top of it. */
     applyView();
     drawOverlay();
+    /* The constructor just rebuilt the stage from scratch, which took the
+     * logo preview element down with it - it lives inside state.fig.stage,
+     * not in figure.json, so nothing else would put it back. */
+    refreshLogoPreview();
   }
 
   /* ================================================================== *
@@ -3355,12 +3373,35 @@
   }
   /* end of export pixel scaling */
 
-  function exportFigure() {
-    if (!state.images) return;
-    var out = $('exportOut');
-    out.textContent = 'rendering...';
+  /* ================================================================== *
+   * The shared cutting/sizing pipeline
+   *
+   * "Folder (zip)" and the OBS package both need the same thing: every layer
+   * image cut to what it paints, the pixel-valued fields in figure.json
+   * scaled to match a sized export, and the backdrop handled the same way.
+   * This is that work, lifted out so there is exactly one place that does
+   * it - a fix here reaches both exports, and neither carries a copy of the
+   * other's cutting logic.
+   *
+   * opts.target: 0 for master, otherwise the export width in px.
+   * opts.includeBackground: false leaves the backdrop out of `files`
+   * entirely (the OBS page is transparent and never packs it); the
+   * `background` field itself is untouched here either way - a caller that
+   * does not want it, such as the OBS package, deletes it from the returned
+   * figure itself.
+   * opts.onProgress: optional, called with a short status string while a
+   * big figure cuts one file at a time.
+   *
+   * Resolves { files, figure, stats: { before, after } }. `figure` is a
+   * fresh deep copy - state.figure is never touched by an export. */
+  function buildExportPipeline(opts) {
+    opts = opts || {};
+    if (!state.images) return Promise.reject(new Error('Bilder sind noch nicht geladen.'));
 
-    var target = parseInt($('exportSize').value, 10) || 0;
+    var target = opts.target || 0;
+    var includeBackground = opts.includeBackground !== false;
+    var onProgress = opts.onProgress || function () {};
+
     var f = JSON.parse(JSON.stringify(state.figure));
     var src = state.figure;
     var w = (src.size && src.size.width) || 1000;
@@ -3464,14 +3505,17 @@
     var chain = Promise.resolve();
     order.forEach(function (path, n) {
       chain = chain.then(function () {
-        out.textContent = 'cutting ' + (n + 1) + ' of ' + order.length + ' ...';
+        onProgress('cutting ' + (n + 1) + ' of ' + order.length + ' ...');
         return new Promise(function (res) { setTimeout(res, 0); });
       }).then(function () { return cutOne(path); });
     });
 
     /* The backdrop is not a layer: it covers the host and is never cut. At
-     * master it keeps its original bytes, below master it is scaled. */
-    if (src.background && state.images._bg) {
+     * master it keeps its original bytes, below master it is scaled. A
+     * caller that does not want it packed at all (the OBS page is
+     * transparent) skips this block entirely, rather than cutting a file
+     * nobody asked for. */
+    if (includeBackground && src.background && state.images._bg) {
       var bgPath = src.background, bgImg = state.images._bg;
       chain = chain.then(function () {
         if (scale === 1) {
@@ -3509,7 +3553,7 @@
     }
     delete f.sources;
 
-    chain.then(function () {
+    return chain.then(function () {
       /* Write the rectangles, then point the JSON at the names actually
        * written. crops runs parallel to frames; a src layer gets one crop. */
       if (f.background && renamed[f.background]) f.background = renamed[f.background];
@@ -3546,8 +3590,28 @@
         }
       }
 
+      return { files: files, figure: f, stats: { before: before, after: after } };
+    });
+  }
+
+  /* "Folder (zip)" - the pipeline's files, plus figure.json, zipped and
+   * downloaded. This is the one consumer that wants the backdrop packed. */
+  function exportFigure() {
+    if (!state.images) return;
+    var out = $('exportOut');
+    out.textContent = 'rendering...';
+
+    var target = parseInt($('exportSize').value, 10) || 0;
+
+    buildExportPipeline({
+      target: target,
+      includeBackground: true,
+      onProgress: function (msg) { out.textContent = msg; }
+    }).then(function (res) {
       var enc = new TextEncoder();
-      files.push({ name: 'figure.json', data: enc.encode(JSON.stringify(f, null, 2)) });
+      var files = res.files.concat([
+        { name: 'figure.json', data: enc.encode(JSON.stringify(res.figure, null, 2)) }
+      ]);
       var blob = makeZip(files);
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -3559,10 +3623,342 @@
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       var mb = function (n) { return (n / 1048576).toFixed(1) + ' MB'; };
       out.textContent = files.length + ' files, ' + Math.round(blob.size / 1024) +
-        ' KB. Decoded layers ' + mb(before) + ' -> ' + mb(after) + '.';
+        ' KB. Decoded layers ' + mb(res.stats.before) + ' -> ' + mb(res.stats.after) + '.';
     }).catch(function (e) {
       out.textContent = 'Export fehlgeschlagen: ' + ((e && e.message) || e);
     });
+  }
+
+  /* ================================================================== *
+   * OBS package - a zip that works without Python, server or repo: obs.html
+   * with everything inlined, the cut layer images, an optional logo and two
+   * text files for whoever receives it. Built by addons/obs/package.js
+   * (loaded on demand, see loadObsPackageScript below); this block only
+   * gathers what that builder needs and turns its output into a zip.
+   * ================================================================== */
+
+  /* The chosen logo, or null. Studio state, like `place` and `marks` -
+   * never written into figure.json, never part of undo, gone the moment the
+   * figure changes because nothing says the box still fits the new canvas.
+   * `file` is kept (not just its bytes) so the zip can read the original
+   * bytes at build time without a second copy sitting in memory meanwhile. */
+  var obsLogo = null; /* { file, url, aspect, ext } */
+
+  function extFromType(type) {
+    if (type === 'image/png') return 'png';
+    if (type === 'image/jpeg') return 'jpg';
+    return 'webp';
+  }
+
+  /* Passed to package.js, which is not allowed a clock of its own - see the
+   * "pure (no DOM, no fetch, no Date)" rule in addons/obs/package.js. Reading
+   * it here, once, keeps that rule true without asking the receiver of the
+   * zip to trust a date baked in at some earlier moment. */
+  function todayISO() {
+    var d = new Date();
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  }
+
+  function fetchText(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url + ': ' + r.status);
+      return r.text();
+    });
+  }
+
+  /* Loaded once, on the first click - most sessions never press this button,
+   * so there is no reason to ship the addon on every page load. A failed
+   * attempt (the addon not built yet, or a typo in the path) is not cached:
+   * the next click tries the network again, which is what lets this exact
+   * button start working the moment addons/obs/package.js appears, no reload
+   * needed. */
+  var obsPkgPromise = null;
+  function loadObsPackageScript() {
+    if (window.IdleObsPackage) return Promise.resolve(window.IdleObsPackage);
+    if (!obsPkgPromise) {
+      obsPkgPromise = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = '../addons/obs/package.js';
+        s.onload = function () {
+          if (window.IdleObsPackage) resolve(window.IdleObsPackage);
+          else reject(new Error('addons/obs/package.js loaded without IdleObsPackage'));
+        };
+        s.onerror = function () { reject(new Error('addons/obs/package.js missing')); };
+        document.head.appendChild(s);
+      }).catch(function (e) {
+        obsPkgPromise = null; /* let the next click try again */
+        throw e;
+      });
+    }
+    return obsPkgPromise;
+  }
+
+  function obsSay(msg) {
+    var el = $('obsOut');
+    if (el) el.textContent = msg || '';
+  }
+
+  /* Read once per use rather than kept in a var - the sliders are the one
+   * source of truth for where the logo sits, same as every other control in
+   * this file. */
+  function obsSliderValues() {
+    return {
+      x: parseFloat($('obsLogoX').value) || 0,
+      y: parseFloat($('obsLogoY').value) || 0,
+      width: Math.max(0.05, parseFloat($('obsLogoW').value) || 0.05)
+    };
+  }
+
+  /* The live preview: an element sitting inside the mounted figure's own
+   * stage div, so it inherits the same scale-to-fit transform every layer
+   * does and needs no resize handling of its own. Rebuilt from scratch on
+   * every call - cheap, and simpler than tracking whether one already
+   * exists across a figure swap or a rebuildStage(). Box formula matches
+   * the contract IdleObsPackage.build follows for the real overlay, so what
+   * is previewed here is where the logo actually ends up in obs.html. */
+  function obsLogoInFigure() {
+    var box = $('obsLogoInFigure');
+    return !!(box && box.checked);
+  }
+
+  /* "logo inside figure" off: the logo only ships as logo.html, placed in
+   * OBS, so X / Y / width have nothing to place and the stage shows no
+   * preview. On: everything as before. */
+  function syncObsLogoInFigure() {
+    var on = obsLogoInFigure();
+    var ids = ['obsLogoX', 'obsLogoY', 'obsLogoW'];
+    for (var i = 0; i < ids.length; i++) {
+      var input = $(ids[i]);
+      if (!input) continue;
+      input.disabled = !on;
+      if (input.parentNode && input.parentNode.classList) input.parentNode.classList.toggle('off', !on);
+    }
+    refreshLogoPreview();
+  }
+
+  function refreshLogoPreview() {
+    var old = document.getElementById('obsLogoPreviewEl');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    if (!obsLogo || !obsLogoInFigure() || !state.fig || !state.fig.stage) return;
+
+    var f = state.figure;
+    var w = (f && f.size && f.size.width) || 1000;
+    var h = (f && f.size && f.size.height) || 1000;
+    var v = obsSliderValues();
+    var bw = v.width * w;
+    var bh = bw / (obsLogo.aspect || 1);
+
+    var el = document.createElement('div');
+    el.id = 'obsLogoPreviewEl';
+    el.className = 'obs-logo-preview';
+    el.style.left = (v.x * w - bw / 2) + 'px';
+    el.style.top = (v.y * h - bh / 2) + 'px';
+    el.style.width = bw + 'px';
+    el.style.height = bh + 'px';
+    el.style.backgroundImage = 'url("' + obsLogo.url + '")';
+    /* Appended last, so it paints above every idle-layer box already in the
+     * stage - the same "above every layer" the contract asks obs.html's own
+     * overlay for. */
+    state.fig.stage.appendChild(el);
+  }
+
+  function resetObsLogo() {
+    if (obsLogo && obsLogo.url) URL.revokeObjectURL(obsLogo.url);
+    obsLogo = null;
+    var input = $('obsLogo');
+    if (input) input.value = '';
+    var rm = $('obsLogoRemove');
+    if (rm) rm.hidden = true;
+    refreshLogoPreview();
+  }
+
+  function pickObsLogo(file) {
+    var url = URL.createObjectURL(file);
+    loadImg(url).then(function (img) {
+      if (obsLogo && obsLogo.url) URL.revokeObjectURL(obsLogo.url);
+      obsLogo = {
+        file: file,
+        url: url,
+        aspect: img.naturalWidth / img.naturalHeight,
+        ext: extFromType(file.type)
+      };
+      var rm = $('obsLogoRemove');
+      if (rm) rm.hidden = false;
+      obsSay('');
+      refreshLogoPreview();
+    }).catch(function (e) {
+      URL.revokeObjectURL(url);
+      obsSay(String((e && e.message) || e));
+    });
+  }
+
+  /* Rebuilt whenever the figure changes or a mood is created, renamed or
+   * removed - see mountFigure() and refreshMoodEverything(). Idle.stateNames
+   * always returns at least ['neutral'], so a figure with no moods still
+   * gets a usable, one-entry select rather than an empty one. */
+  function buildObsMoodSelect() {
+    var sel = $('obsMood');
+    if (!sel) return;
+    var names = Idle.stateNames(state.figure);
+    var prev = sel.value;
+    sel.innerHTML = '';
+    for (var i = 0; i < names.length; i++) {
+      var o = document.createElement('option');
+      o.value = names[i];
+      o.textContent = names[i];
+      sel.appendChild(o);
+    }
+    sel.value = names.indexOf(prev) >= 0 ? prev : 'neutral';
+  }
+
+  var OBS_CREDIT_KEY = 'idle-studio-obs-credit';
+
+  /* Same try/catch-everywhere pattern as readLayout()/writeLayout() below -
+   * a private window or storage switched off costs this field its memory,
+   * never the studio itself. */
+  function readObsCredit() {
+    try {
+      var v = window.localStorage.getItem(OBS_CREDIT_KEY);
+      return v == null ? '' : v;
+    } catch (e) { return ''; }
+  }
+
+  function writeObsCredit(v) {
+    try { window.localStorage.setItem(OBS_CREDIT_KEY, v); } catch (e) { /* nothing lost */ }
+  }
+
+  /* The actual build, once addons/obs/package.js is known to be on the
+   * page. Kept apart from the click handler so a missing addon can bail out
+   * before any of this - the fetches, the pipeline, the encoding - ever
+   * starts, exactly as the contract asks ("nothing else happens"). */
+  function runObsPackage(IdleObsPackage) {
+    var target = parseInt($('exportSize').value, 10) || 0;
+    var startState = $('obsMood') ? $('obsMood').value : 'neutral';
+    var credit = $('obsCredit') ? $('obsCredit').value : '';
+    var license = $('obsLicense') ? $('obsLicense').value : '';
+    var wipe = $('obsWipe').checked, glow = $('obsGlow').checked, gleam = $('obsGleam').checked;
+    var inFigure = obsLogoInFigure();
+    var v = obsSliderValues();
+    var logoInfo = obsLogo;
+    var name = state.name;
+
+    obsSay('fetching sources...');
+    return Promise.all([
+      fetchText('../player/idle.js'),
+      fetchText('../player/idle.css'),
+      fetchText('../addons/obs/scene.js')
+    ]).then(function (srcs) {
+      return buildExportPipeline({
+        target: target,
+        includeBackground: false,
+        onProgress: obsSay
+      }).then(function (res) {
+        var figure = res.figure;
+        /* The OBS page is transparent by construction - see obs.html's own
+         * requirements in the plan. The field would otherwise still point at
+         * a file this zip never packs. */
+        delete figure.background;
+
+        return (logoInfo ? logoInfo.file.arrayBuffer() : Promise.resolve(null))
+          .then(function (ab) {
+            var logoBytes = ab ? new Uint8Array(ab) : null;
+            var logoFileName = logoInfo ? 'logo.' + logoInfo.ext : null;
+            var logoOpt = logoInfo ? {
+              file: logoFileName,
+              aspect: logoInfo.aspect,
+              x: v.x, y: v.y, width: v.width,
+              wipe: wipe, glow: glow, gleam: gleam,
+              inFigure: inFigure
+            } : null;
+
+            var opts = {
+              name: name,
+              figure: figure,
+              sources: { idleJs: srcs[0], idleCss: srcs[1], sceneJs: srcs[2] },
+              logo: logoOpt,
+              startState: startState,
+              credit: credit,
+              license: license,
+              date: todayISO()
+            };
+
+            var problems = IdleObsPackage.validate(opts);
+            if (problems && problems.length) {
+              obsSay('Refused: ' + problems.join('; '));
+              return;
+            }
+
+            var built = IdleObsPackage.build(opts);
+            var enc = new TextEncoder();
+            var files = res.files.concat(built.map(function (bf) {
+              return { name: bf.name, data: enc.encode(bf.text) };
+            }));
+            if (logoBytes) files.push({ name: logoFileName, data: logoBytes });
+
+            var blob = makeZip(files);
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = name + '-obs.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+            obsSay(files.length + ' files, ' + Math.round(blob.size / 1024) + ' KB.');
+          });
+      });
+    });
+  }
+
+  function buildObsPackageZip() {
+    if (!state.figure || !state.name) { obsSay('Load a figure first.'); return; }
+    if (!state.images) { obsSay('Bilder sind noch nicht geladen.'); return; }
+
+    obsSay('loading addon...');
+    loadObsPackageScript().then(function (IdleObsPackage) {
+      runObsPackage(IdleObsPackage).catch(function (e) {
+        obsSay('Export fehlgeschlagen: ' + ((e && e.message) || e));
+      });
+    }, function () {
+      /* The one message the contract asks for by name, so a session running
+       * ahead of L5a - or a broken path - reads as "not built yet", not as a
+       * generic network failure. Nothing above this point ran a fetch or
+       * touched the pipeline. */
+      obsSay('The OBS addon (addons/obs/package.js) is missing.');
+    });
+  }
+
+  function bindObsPackage() {
+    $('obsLogo').addEventListener('change', function () {
+      if (this.files && this.files[0]) pickObsLogo(this.files[0]);
+      this.value = '';
+    });
+    $('obsLogoRemove').addEventListener('click', function () {
+      resetObsLogo();
+      obsSay('');
+    });
+
+    var sliderIds = ['obsLogoX', 'obsLogoY', 'obsLogoW'];
+    var outIds = { obsLogoX: 'obsLogoXVal', obsLogoY: 'obsLogoYVal', obsLogoW: 'obsLogoWVal' };
+    for (var i = 0; i < sliderIds.length; i++) {
+      (function (id) {
+        $(id).addEventListener('input', function () {
+          $(outIds[id]).textContent = fmt(parseFloat(this.value));
+          refreshLogoPreview();
+        });
+      })(sliderIds[i]);
+    }
+
+    $('obsLogoInFigure').addEventListener('change', syncObsLogoInFigure);
+    syncObsLogoInFigure();
+
+    $('obsCredit').value = readObsCredit();
+    $('obsCredit').addEventListener('input', function () {
+      writeObsCredit(this.value);
+    });
+
+    $('obsBtn').addEventListener('click', buildObsPackageZip);
   }
 
   /* ================================================================== *
@@ -4737,6 +5133,7 @@
     bindPivotDrag();
     bindNudgeKeys();
     bindUndo();
+    bindObsPackage();
 
     /* Pointer tracking is bound once, to the overlay, and forwarded to
      * whichever figure is mounted. Calling figure.trackPointer() on every

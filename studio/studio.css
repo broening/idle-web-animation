@@ -208,6 +208,24 @@ html, body {
   cursor: crosshair;
 }
 
+/* The OBS logo preview: a child of the mounted figure's own idle-stage div,
+ * in canvas pixels, so it scales with the same transform every layer does
+ * and needs no resize handling of its own (see refreshLogoPreview() in
+ * studio.js). Never part of figure.json - this is a rehearsal for where the
+ * logo lands in the exported obs.html, not a layer. */
+.obs-logo-preview {
+  position: absolute;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/* logo X / Y / width only place the logo inside obs.html. With "logo inside
+ * figure" off they mean nothing, so they grey out (the class is set by
+ * syncObsLogoInFigure() in studio.js; :has() is newer than Chromium 103). */
+.slider.off { opacity: 0.45; }
+.slider input:disabled { cursor: not-allowed; }
+
 /* ---------------- transport ---------------- */
 
 .transport {

@@ -192,6 +192,32 @@ open.
 
 `&bg=` takes 3 or 6 hex digits without `#` and works on `figure.html` too.
 
+## Part C: a package to share
+
+Parts A and B need this repo and `tools/serve.py`. A package does not: it is a
+zip someone unpacks and opens in OBS with **Local file**.
+
+1. In the studio, pick the figure and open the **Export** card.
+2. Pick a **size**, fill in the **OBS package** block (logo, start mood,
+   credit, licence) and click **OBS package (zip)**.
+3. Hand over `<figure>-obs.zip`.
+
+The zip holds `obs.html` (figure, player and scene glue all inline),
+`layers/`, the logo if you chose one, `ANLEITUNG.txt` with the exact OBS steps
+and the figure's real width and height, and `LICENSE.txt` when a licence is
+chosen. The figure's background is never packed; the page is transparent.
+
+A logo also ships as `logo.html`, a transparent CSS-only page with just the
+logo and its effects, added as a second Browser source so it can be moved,
+scaled and cropped in OBS; `ANLEITUNG.txt` gives its source size. Tick
+**logo inside figure** in the studio to bake it into `obs.html` as well.
+
+Moods and scene names work as in Part A. The camera avatar does not: it needs
+the server. The builder is `package.js`, tested by `node tools/test-addons.mjs`.
+
+German readers: [ANLEITUNG.md](ANLEITUNG.md) walks through all of this, from
+the server to a package in OBS, with credit and licence.
+
 ## URL parameters
 
 | Parameter | Pages | Meaning |
