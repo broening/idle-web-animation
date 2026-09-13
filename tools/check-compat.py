@@ -23,6 +23,11 @@ TARGETS = [
     "studio/studio.js",
     "studio/studio.css",
     "studio/index.html",
+    "addons/obs/figure.html",
+    "addons/obs/scene.js",
+    # addons/obs/avatar.html is deliberately NOT in this list: it loads
+    # MediaPipe and needs OBS 31+ / Chromium 127, well above the floor this
+    # check enforces for everything else. See addons/obs/README.md.
 ]
 
 # pattern, first Chrome version that has it, what to use instead

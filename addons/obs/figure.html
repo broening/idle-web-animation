@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OBS figure</title>
+<link rel="stylesheet" href="../../player/idle.css">
+<style>
+  /* An OBS Browser Source paints straight onto the scene: no chrome, no
+     margin, no scrollbar. Anything but the figure itself would show up as a
+     visible rectangle over whatever the source is composited on top of, so
+     the whole page is transparent by default and the host fills whatever
+     size the source is given. */
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+  #host {
+    position: absolute;
+    inset: 0;
+  }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script src="../../player/idle.js"></script>
+<script src="./scene.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var host = document.getElementById('host');
+
+  /* Every query value is untrusted input: OBS lets anyone editing the scene
+   * type whatever they like into the browser source URL, and a typo must
+   * never crash the page or leak onto the stream as visible text. So each
+   * one is checked against its own pattern before it is trusted, and every
+   * fallback is silent. */
+  var q = (window.IdleObs && window.IdleObs.params()) || {};
+
+  var FIGURE_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+  var figureName = (typeof q.figure === 'string' && FIGURE_RE.test(q.figure))
+    ? q.figure
+    : 'pedro';
+
+  /* ?bg=<hex> is the chroma-key fallback for a stream setup that has no
+   * usable alpha path (some capture chains flatten transparency). 3 or 6
+   * hex digits, same as any CSS hex colour minus the leading "#". Anything
+   * else leaves the page transparent, which is the actual default. */
+  var BG_RE = /^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+  if (typeof q.bg === 'string' && BG_RE.test(q.bg)) {
+    document.documentElement.style.background = '#' + q.bg;
+    document.body.style.background = '#' + q.bg;
+  }
+
+  /* ?state= is the mood the page starts in and the mood it falls back to
+   * whenever a scene name carries no mood word of its own (see scene.js).
+   * Validated loosely here on purpose: an unknown name is exactly what
+   * IdleFigure#setState already refuses to act on (part 1 of this plan), so
+   * rejecting it twice would just duplicate that logic. */
+  var startState = (typeof q.state === 'string' && q.state) ? q.state : 'neutral';
+
+  var base = '../../figures/' + figureName + '/';
+
+  fetch(base + 'figure.json')
+    .then(function (r) {
+      if (!r.ok) throw new Error('figure.json ' + r.status);
+      return r.json();
+    })
+    .then(function (fig) {
+      var player = new IdleFigure(host, fig, base, { background: false });
+
+      /* No trackPointer(): OBS composites this page with no mouse ever
+       * moving over it, so wiring one up would just leave gaze permanently
+       * centred instead of running its own drift - see the gaze block in
+       * player/idle.js. Resize still has to re-fit the stage: a Browser
+       * Source can be resized in the scene at any time. */
+      window.addEventListener('resize', function () { player.fit(); });
+      player.play();
+
+      /* states/setState land with the moods feature (part 1 of this plan).
+       * Until then figure.states is empty and player.setState is undefined,
+       * so both guards below quietly do nothing and the figure just keeps
+       * showing neutral - which is the documented fallback, not a bug. */
+      var stateNames = ['neutral'].concat(Object.keys(fig.states || {}));
+
+      function applyState(name) {
+        if (typeof player.setState === 'function') player.setState(name);
+      }
+
+      applyState(startState);
+
+      if (window.IdleObs && typeof IdleObs.watchScene === 'function') {
+        IdleObs.watchScene(function (sceneName) {
+          var name = IdleObs.matchState(sceneName, stateNames, startState);
+          applyState(name);
+        });
+      }
+    })
+    .catch(function (e) {
+      /* Never paint text into the page: a caption over a streamed figure
+       * reads as a broadcast graphic, not an error. The console is for
+       * whoever is debugging the scene, not for the audience watching it. */
+      if (window.console && console.error) console.error('OBS figure page failed to load', e);
+    });
+})();
+</script>
+</body>
+</html>

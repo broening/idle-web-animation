@@ -19,5 +19,7 @@ jobs:
         run: node tools/test-determinism.mjs
       - name: page and contact sheet agree
         run: node tools/test-agreement.mjs
+      - name: OBS scene-name matching
+        run: node tools/test-addons.mjs
       - name: nothing newer than Chromium 103
         run: python tools/check-compat.py
