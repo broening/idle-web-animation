@@ -202,6 +202,25 @@
     <!-- ------------------------------------------------ settings rail -->
     <aside class="rail rail-r" id="railR" aria-label="settings">
 
+      <details class="card" id="moodCard" open>
+        <summary>Mood</summary>
+        <div id="moodCtl" class="ctl"></div>
+        <details class="note" id="moodNote">
+          <summary>how moods work</summary>
+          <p class="hint">A mood is a second look for the same rig: a lower
+          head, a slower breath, another mouth. Editing one here writes only
+          the differences into <code>figure.states</code> &mdash; the rig
+          itself (<code>pivot</code>, <code>parent</code>, <code>depth</code>,
+          <code>role</code>, <code>blend</code>, <code>lag</code>,
+          <code>opacity</code>, <code>alt</code>, which motions a layer has)
+          stays locked while a mood is selected, because every mood shares one
+          rig.</p>
+          <p class="hint">With a mood picked, the stage, the contact sheet and
+          Events show exactly that mood, with no blend &mdash; what you see
+          here is where it ends up, not a mix on the way there.</p>
+        </details>
+      </details>
+
       <details class="card" open>
         <summary>Layer</summary>
         <div id="layerCtl" class="ctl"></div>
