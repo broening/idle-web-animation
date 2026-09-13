@@ -620,15 +620,38 @@ for (const [label, layer, idx, want] of cropCases) {
   checks++;
 }
 
-/* Both renderers have to go through cropOf, or they split again. */
+/* Both renderers have to go through the shared decision, or they split again.
+ *
+ * Since moods can swap a layer's picture, that decision is two functions:
+ * imagesOf() lists every picture a layer can show with its rectangle (the
+ * page builds one <img> per entry, loadImages one Image per entry), and
+ * imageOf() says which one is on screen for a solved state (render and
+ * drawFrame both ask it). Both get their rectangles from cropOf and nowhere
+ * else. The answers are held in variables called `pic` / `pics`, and reading
+ * `.crop` off those is reading the shared answer, not the file - every other
+ * `.crop` or `.crops` outside cropOf is a second opinion. */
 const buildBody = (body.match(/IdleFigure\.prototype\._build = function[\s\S]*?\n  \};/) || [''])[0];
+const renderBody = (body.match(/IdleFigure\.prototype\.render = function[\s\S]*?\n  \};/) || [''])[0];
 const drawBody = (body.match(/function drawFrame[\s\S]*?\n  \}/) || [''])[0];
-if (!/cropOf\(L, k\)/.test(buildBody)) fail('_build fragt cropOf nicht - die Seite ignoriert crop');
-if (!/cropOf\(L, fi\)/.test(drawBody)) fail('drawFrame fragt cropOf nicht - der Bilderstreifen ignoriert crop');
-if (/\.crops?\b/.test(body.replace(/function cropOf[\s\S]*?\n  \}/, ''))) {
+const loadBody = (body.match(/function loadImages[\s\S]*?\n  \}/) || [''])[0];
+const imagesOfBody = (body.match(/function imagesOf[\s\S]*?\n  \}/) || [''])[0];
+const imageOfBody = (body.match(/function imageOf\([\s\S]*?\n  \}/) || [''])[0];
+if (!/imagesOf\(L, f\)/.test(buildBody)) fail('_build fragt imagesOf nicht - die Seite baut ihre Bilder selbst');
+if (!/imageOf\(n\.layer, s, this\.figure\)/.test(renderBody)) fail('render fragt imageOf nicht - die Seite waehlt ihr Bild selbst');
+if (!/imageOf\(L, s2, figure\)/.test(drawBody)) fail('drawFrame fragt imageOf nicht - der Bilderstreifen waehlt sein Bild selbst');
+if (!/imagesOf\(L, figure\)/.test(loadBody)) fail('loadImages fragt imagesOf nicht - Stimmungsbilder werden nicht geladen');
+if (/frameOf\(/.test(renderBody) || /frameOf\(/.test(drawBody)) {
+  fail('ein Zeichner fragt frameOf direkt statt imageOf - eine zweite Meinung');
+}
+if (!/cropOf\(/.test(imagesOfBody) || !/cropOf\(/.test(imageOfBody) || !/frameOf\(/.test(imageOfBody)) {
+  fail('imagesOf/imageOf holen Rechteck oder Bild nicht bei cropOf/frameOf');
+}
+const outsideCropOf = body.replace(/function cropOf[\s\S]*?\n  \}/, '')
+                          .replace(/\bpics?(?:\[\w+\])?\.crop\b/g, '');
+if (/\.crops?\b/.test(outsideCropOf)) {
   fail('crop wird ausserhalb von cropOf gelesen - eine zweite Meinung');
 }
-checks += 3;
+checks += 7;
 
 /* A cropped figure draws its image into the rectangle, an uncropped one
  * across the whole canvas. Recorded on a fake context. */
@@ -645,6 +668,146 @@ if (JSON.stringify(calls) !== JSON.stringify([['IMG-C', 10, 20, 30, 40], ['IMG-N
 }
 checks++;
 console.log('crop: cropOf entscheidet allein, beide Zeichner fragen es.');
+
+/* --- 8b. moods: the page and the contact sheet show the same picture ------
+ *
+ * A mood can swap a layer's picture, and the swap has to land on the same
+ * frame in both renderers, with the same rectangle. The page cannot load a
+ * picture at the moment of the switch - that is a hole on screen until it
+ * decodes - so _build makes an <img> for every mood picture up front and
+ * loadImages loads every one. Checked here on a fake DOM and a fake Image,
+ * running the real _build, render, loadImages and drawFrame. */
+
+function fakeEl(tag) {
+  return {
+    tagName: tag.toUpperCase(), style: {}, children: [], className: '', attrs: {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    appendChild(c) { this.children.push(c); return c; },
+    set innerHTML(v) { this.children = []; },
+    get innerHTML() { return ''; },
+    getBoundingClientRect() { return { left: 0, top: 0, width: 0, height: 0 }; }
+  };
+}
+globalThis.document = { createElement: fakeEl };
+globalThis.Image = class {
+  set src(v) { this._src = v; setTimeout(() => this.onload && this.onload(), 0); }
+  get src() { return this._src; }
+};
+
+const moodFig = () => ({
+  size: { width: 100, height: 100 }, motion: { stateSeconds: 0.4 },
+  layers: [
+    { id: 'kopf', src: 'kopf.webp', crop: [1, 2, 30, 40], pivot: [0.5, 0.5],
+      motions: [{ type: 'breathe' }] },
+    { id: 'mund', src: 'mund.webp', parent: 'kopf', pivot: [0.5, 0.5] },
+    { id: 'fx', frames: ['f1.webp', 'f2.webp'], crops: [[0, 0, 10, 10], [5, 5, 10, 10]],
+      pivot: [0.5, 0.5], motions: [{ type: 'flipbook', mode: 'burst', fps: 5, every: 1.3 }] },
+    { id: 'geist', src: 'geist.webp', hidden: true, pivot: [0.5, 0.5] }
+  ],
+  states: {
+    sad: { mund: { src: 'mund-sad.webp', crop: [10, 20, 30, 40] }, kopf: { tilt: -3 },
+           geist: { hidden: false } },
+    happy: { mund: { src: 'mund-happy.webp' }, fx: { src: 'nie.webp' } },
+    /* Same file as happy with another rectangle: one file, one cut, the
+     * first mood's wins in both renderers. */
+    grin: { mund: { src: 'mund-happy.webp', crop: [9, 9, 9, 9] } }
+  }
+});
+
+{
+  const fig = moodFig();
+  const host = fakeEl('div');
+  const player = new Idle.IdleFigure(host, fig, 'base', { background: false });
+  const mundNode = player._nodes.mund;
+  const gotSrcs = mundNode.imgs.map(im => im.src);
+  const wantSrcs = ['base/mund.webp', 'base/mund-sad.webp', 'base/mund-happy.webp'];
+  if (JSON.stringify(gotSrcs) !== JSON.stringify(wantSrcs)) {
+    fail(`_build baut fuer "mund" ${JSON.stringify(gotSrcs)}, erwartet ${JSON.stringify(wantSrcs)}`);
+  }
+  if (mundNode.imgs[1].style.left !== '10px' || mundNode.imgs[1].style.height !== '40px') {
+    fail('_build heftet das Stimmungsbild nicht an sein crop');
+  }
+  if (mundNode.imgs[0].style.visibility !== undefined || mundNode.imgs[1].style.visibility !== 'hidden') {
+    fail('_build: das eigene Bild muss sichtbar starten, Stimmungsbilder versteckt');
+  }
+  if (player._nodes.fx.imgs.length !== 2) fail('_build: src einer Stimmung auf einer frames-Ebene darf kein <img> bekommen');
+  if (player._nodes.kopf.imgs.length !== 1) fail('_build: eine Ebene ohne Stimmungsbild bekommt genau ein <img>');
+  checks += 5;
+
+  const bank = await Idle.loadImages(fig, 'base');
+  const loaded = Object.keys(bank.mund.bySrc).sort();
+  if (JSON.stringify(loaded) !== JSON.stringify(['mund-happy.webp', 'mund-sad.webp', 'mund.webp'])) {
+    fail(`loadImages laedt fuer "mund" ${JSON.stringify(loaded)} - Stimmungsbilder fehlen`);
+  }
+  if (bank.mund.length !== 1 || !bank.mund[0] || bank.fx.length !== 2) {
+    fail('loadImages: die Bank nach Index muss ihre alte Form behalten, der Export liest sie so');
+  }
+  if (bank.fx.bySrc['nie.webp']) fail('loadImages laedt ein src, das auf einer frames-Ebene nie gezeigt wird');
+  checks += 3;
+
+  /* What each renderer puts on screen, as [file, x, y, w, h] per layer. */
+  const domShows = () => {
+    const out = [];
+    for (const L of fig.layers) {
+      const n = player._nodes[L.id];
+      if (n.op <= 0.0008) continue;
+      const vis = n.imgs.filter(im => im.style.visibility !== 'hidden');
+      if (!vis.length) continue;
+      if (vis.length > 1) fail(`Seite zeigt fuer "${L.id}" ${vis.length} Bilder zugleich`);
+      const im = vis[0];
+      const px = v => v === undefined ? undefined : parseFloat(v);
+      out.push([im.src, px(im.style.left) ?? 0, px(im.style.top) ?? 0,
+                px(im.style.width) ?? 100, px(im.style.height) ?? 100]);
+    }
+    return out;
+  };
+  const canvasShows = (images, t, state) => {
+    const calls = [];
+    const g = { setTransform() {}, clearRect() {}, save() {}, restore() {},
+                drawImage(img, x, y, w, h) { calls.push([img._src, x, y, w, h]); } };
+    Idle.drawFrame(g, fig, images, t, { ctx: { pointerX: 0, pointerY: 0, state } });
+    return calls;
+  };
+
+  const inputs = [undefined, 'sad', 'happy', 'grin', 'neutral',
+    { from: 'neutral', to: 'sad', since: 2 }, { from: 'sad', to: 'happy', since: 5.05 }];
+  const seen = new Set();
+  for (const state of inputs) {
+    for (let i = 0; i <= 160; i++) {
+      const t = i / 20;
+      player._stateMix = state;
+      player.render(t);
+      const a = domShows();
+      const b = canvasShows(bank, t, state);
+      if (JSON.stringify(a) !== JSON.stringify(b)) {
+        fail(`Stimmung ${JSON.stringify(state)} bei t=${t}: Seite ${JSON.stringify(a)}, ` +
+             `Bilderstreifen ${JSON.stringify(b)}`);
+      }
+      for (const c of b) seen.add(c.join(','));
+      checks++;
+    }
+  }
+  for (const want of ['base/mund-sad.webp,10,20,30,40', 'base/mund-happy.webp,0,0,100,100',
+                      'base/mund.webp,0,0,100,100', 'base/geist.webp,0,0,100,100']) {
+    if (!seen.has(want)) fail(`der Vergleich hat "${want}" nie gezeigt, er prueft den Fall nicht`);
+    checks++;
+  }
+
+  /* A mood picture added after the figure was mounted and loaded: the page
+   * has no <img> for it and the images object has no entry. Both have to fall
+   * back to the layer's own picture, not one to the new file and the other to
+   * nothing. */
+  fig.states.sad.mund.src = 'mund-neu.webp';
+  player._stateMix = 'sad';
+  player.render(1);
+  const late = canvasShows(bank, 1, 'sad');
+  if (JSON.stringify(domShows()) !== JSON.stringify(late)) {
+    fail(`nachtraeglich gesetztes Stimmungsbild: Seite ${JSON.stringify(domShows())}, Bilderstreifen ${JSON.stringify(late)}`);
+  }
+  if (!late.some(c => c[0] === 'base/mund.webp')) fail('nachtraegliches Stimmungsbild ohne Ladung faellt nicht auf das eigene Bild zurueck');
+  checks += 2;
+  console.log('Stimmungen: Seite und Bilderstreifen zeigen dasselbe Bild im selben Rechteck, auch mitten im Wechsel.');
+}
 
 /* --- 9. pointer input reaches touch too ---------------------------------- */
 

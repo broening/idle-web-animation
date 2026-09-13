@@ -19,6 +19,8 @@ jobs:
         run: node tools/test-determinism.mjs
       - name: page and contact sheet agree
         run: node tools/test-agreement.mjs
+      - name: moods do what the schema says
+        run: node tools/test-states.mjs
       - name: OBS scene-name matching
         run: node tools/test-addons.mjs
       - name: nothing newer than Chromium 103

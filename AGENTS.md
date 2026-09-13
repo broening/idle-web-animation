@@ -72,7 +72,7 @@ the drawing, in 0..1 of the canvas, and set every `parent` by anatomy.
 | 1 | Squash and stretch | `breathe` on the torso. It scales up and narrows at once, so the body keeps its volume. Chest and belly are one pair of lungs: keep their periods close. |
 | 2 | Anticipation | `blink` widens the eye a touch 140 ms before the lid drops. Put `blink` on the eye layers, never on the head: on the head that widening lifts the hat. |
 | 3 | Staging | Your call. The pointer is followed by the head and the pupils and by nothing else. Eyes ride the head through `parent` and carry no `gaze` of their own, or they drift off the face. |
-| 4 | Straight ahead and pose to pose | There are no poses and no keyframes here, on purpose. Do not add any. Every layer is a function of `t`. |
+| 4 | Straight ahead and pose to pose | There are no poses, no keyframes and no timelines here, on purpose. Do not add any. Every layer is a function of `t` plus its inputs. A mood (`states`) is one of those inputs, like the pointer: the page asks for `sad`, it is not a pose placed on a timeline. |
 | 5 | Follow through | The parent chain. Each step down the chain reads time `motion.followSeconds` later, 0.085 s is a good start. Build it by anatomy: hem to cloak to chest, hand to arm to chest, pupil to eyeball to head to chest. `lag` adds seconds for something heavy. |
 | 6 | Slow in and slow out | Free for `breathe`, `sway`, `gaze` and `glow`. `blink` and `flipbook` are hard cuts, and are meant to be. |
 | 7 | Arcs | The pivot is a joint, not a centre. A hand turns about the elbow, a head about the neck, a cloak about the collar. A hand rotating about its own middle is a spinning sticker. |
@@ -113,6 +113,15 @@ screen, so no alpha and no background removal. `charge` builds a discharge in
 stages. `multiply` is the counterpart for shadows on a white field; a
 standing shadow is just a painted layer.
 
+**Moods.** Posture first, pictures second. A head 4 to 6 px lower, a tilt
+of -2 to -3 degrees and a torso breathing at 5.5 instead of 4.0 already
+reads sad; the head 3 px higher and breathing at 3.4 reads happy. A mood's
+`offset` replaces the layer's, so keep any cutting correction in it. A
+different mouth or brow is a full-canvas picture on the same canvas, swapped
+by `src`; it switches hard in the middle of the blend, while the head is
+already moving. List only what differs from neutral, then run
+`node tools/test-states.mjs`.
+
 **A part that sits two pixels off.** `offset` in canvas pixels, children
 inherit it, the pivot stays. Do not re-cut for a seam nobody sees once it
 moves.
@@ -134,18 +143,23 @@ moves.
   Export; never write it by hand.
 - `motion.windowSeconds` is a review window, not a loop period. Looping it
   shows a seam, and that is correct.
+- A mood may not change `pivot`, `parent`, `depth`, `role` or `blend`, nor
+  `lag`, `frames`, `opacity` or `motions`. Every mood shares one rig; a blend
+  cannot put a joint halfway between two anatomies. The engine ignores those
+  keys, and `Idle.checkStates(figure)` reports them.
 
 ## Before you say it is done
 
 ```
 node tools/test-determinism.mjs    ->  DETERMINISTISCH
 node tools/test-agreement.mjs      ->  EINIG
+node tools/test-states.mjs         ->  ZUSTAENDE-OK
 node tools/test-addons.mjs         ->  ADDONS-OK
 python tools/check-compat.py       ->  CHROMIUM-103-TAUGLICH
 ```
 
-The last words are German for deterministic, agreed, and fit for Chromium
-103. Then, if you have a browser, open the studio, pick the figure, and use
+The German last words mean deterministic, agreed, moods in order, and fit
+for Chromium 103. Then, if you have a browser, open the studio, pick the figure, and use
 **Contact sheet** and **Events** under Check: the sheet shows 24 frames of the
 window, the scan lists every blink and burst over 30 seconds. A single
 screenshot cannot prove movement. The bones on the stage show the chain; a

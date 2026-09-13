@@ -860,3 +860,28 @@ html, body {
 .btn.danger { border-color: var(--bad); color: var(--bad); }
 .btn.danger:hover { border-color: var(--bad); background: var(--bg-2); }
 .btn.danger:not(.ghost) { background: var(--bad); color: var(--bg); border-color: var(--bad); font-weight: 600; }
+
+/* ---------------- mood editing ----------------
+ *
+ * A field that a mood overrides gets a small reset button beside it, and a
+ * field the rig owns (fixed for every mood) is greyed out rather than
+ * removed - removing it would make the panel reflow every time the mood
+ * changes, and the point is to see at a glance what a mood can and cannot
+ * touch. */
+.field.locked,
+.slider.locked { opacity: 0.55; }
+
+.field.withReset { grid-template-columns: 92px 1fr 20px; }
+.slider.withReset { grid-template-columns: 92px 1fr 52px 20px; }
+
+.reset {
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.reset:hover { background: var(--bg-2); color: var(--accent); }

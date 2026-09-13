@@ -28,7 +28,13 @@
     placing: null,      /* grab offset while a part is being placed */
     window: 8,
     stageBg: null,  /* null = transparent, else a css colour */
-    unsaved: {}     /* figures that live only in this page, by name */
+    unsaved: {},    /* figures that live only in this page, by name */
+    /* Which mood the panel is editing. Studio state, never saved: the file
+     * only ever remembers a mood by what it changes, not which one someone
+     * happened to be looking at. 'neutral' means the layers as written. */
+    mood: 'neutral',
+    hasApi: false,     /* tools/serve.py answered /_studio, read-only or not */
+    srcOptions: null    /* this figure's layers/ files, for a mood's picture field */
   };
 
   /* ================================================================== *
@@ -116,6 +122,9 @@
     state.figure = fig;
     state.base = base;
     state.selected = null;
+    /* A mood picked while looking at the last figure means nothing on this
+     * one - it may not even have a mood of that name. */
+    state.mood = 'neutral';
     /* A new figure starts with every layer on. Carrying the eye state across
      * would hide a layer of the new figure that happens to share an id. */
     state.hidden = {};
@@ -138,6 +147,7 @@
     state.fig.play();
     $('playBtn').textContent = 'Pause';
 
+    buildMoodCard();
     buildLayerList();
     buildLayerCard();
     buildMotionControls();
@@ -150,6 +160,7 @@
     if (marks.on) setMarkMode(false);
     clearPlace();
     refreshAddFrom();
+    refreshSrcOptions();
     refitStage();
     $('sheet').width = 0;
     $('eventsOut').textContent = '';
@@ -328,7 +339,14 @@
       .catch(function () { return null; })
       .then(function (j) {
         state.canWrite = !!(j && j.write);
+        /* tools/serve.py answered at all - true even in its read-only mode,
+         * since /_files is a GET and needs no write permission. A mood's
+         * picture field uses this to offer a select of real files instead of
+         * a bare text box; a plain `python -m http.server` has no such
+         * route, so this stays false there. */
+        state.hasApi = !!j;
         refreshSaveState();
+        refreshSrcOptions();
       });
   }
 
@@ -412,6 +430,19 @@
       var L = layers[i];
       out.push(L.id + '=' + ((L.frames && L.frames.length) ? L.frames.join('|') : L.src));
     }
+    /* Mood pictures are loaded into the same image bank (Idle.loadImages
+     * loads every state src too), so a mood's src changing under undo or the
+     * JSON box has to trigger the same reload a layer's own src changing
+     * does - otherwise the canvas work goes on drawing whatever was loaded
+     * before, for a picture the page itself shows correctly. */
+    if (f && Idle && typeof Idle.imagesOf === 'function') {
+      for (i = 0; i < layers.length; i++) {
+        var pics = Idle.imagesOf(layers[i], f);
+        var srcs = [];
+        for (var k = 0; k < pics.length; k++) srcs.push(pics[k].src);
+        out.push(layers[i].id + '~' + srcs.join('|'));
+      }
+    }
     return out.join('\n');
   }
 
@@ -425,8 +456,13 @@
      * and switching away and back reads it from there. */
     if (state.unsaved[state.name] === old) state.unsaved[state.name] = state.figure;
     if (!selectedLayer()) state.selected = null;
+    /* Undo past the mood being renamed or deleted leaves nothing of that
+     * name to look at any more - back to neutral rather than a select box
+     * with a value it no longer offers. */
+    if (Idle.stateNames(state.figure).indexOf(state.mood) < 0) state.mood = 'neutral';
 
     rebuildStage();
+    buildMoodCard();
     buildLayerList();
     buildLayerCard();
     buildMotionControls();
@@ -688,6 +724,7 @@
     state.figure = null;
     state.name = null;
     state.selected = null;
+    state.mood = 'neutral';
     state.hidden = {};
     state.images = null;
     state.saved = '';
@@ -701,6 +738,7 @@
     $('iouTable').innerHTML = '';
     $('jsonOut').value = '';
 
+    buildMoodCard();
     buildLayerList();
     buildLayerCard();
     buildMotionControls();
@@ -993,6 +1031,345 @@
   /* end of the parent-chain guard */
 
   /* ================================================================== *
+   * Moods ("states")
+   *
+   * A mood is a second look for the same rig, kept as a table of overrides
+   * against the layers as written. The panel edits one mood at a time -
+   * state.mood, studio state, never saved - and every write below lands in
+   * figure.states[state.mood][layerId], never in the layer itself. Neutral
+   * (state.mood === 'neutral') is the ordinary path through every card and
+   * takes none of this.
+   *
+   * Four small functions carry the whole contract: moodOverrideOf reads a
+   * layer's table for the current mood, hasOverride/overrideVal read one key
+   * of it (falling back to the neutral value the panel was handed), and
+   * setOverride/clearOverride write and prune it. `group` is null for a
+   * layer-level key (offset, tilt, hidden, src) and a motion type name for
+   * one of that motion's parameters - the same two shapes docs/figure-json.md
+   * describes under "What a mood can change".
+   * ================================================================== */
+
+  function moodTable() {
+    if (state.mood === 'neutral') return null;
+    var f = state.figure;
+    return (f && f.states && f.states[state.mood]) || null;
+  }
+
+  function moodOverrideOf(layerId) {
+    var t = moodTable();
+    return (t && Object.prototype.hasOwnProperty.call(t, layerId)) ? t[layerId] : null;
+  }
+
+  function hasOverride(layerId, group, key) {
+    var ov = moodOverrideOf(layerId);
+    if (!ov) return false;
+    return group
+      ? !!(ov[group] && Object.prototype.hasOwnProperty.call(ov[group], key))
+      : Object.prototype.hasOwnProperty.call(ov, key);
+  }
+
+  /* The value a mood shows for one key, or `fallback` - the neutral value the
+   * caller already has - when the mood does not touch it. This is "show
+   * values as the mood sees them": the override where there is one, the
+   * layer's own value otherwise. */
+  function overrideVal(layerId, group, key, fallback) {
+    var ov = moodOverrideOf(layerId);
+    if (!ov) return fallback;
+    var v = group ? (ov[group] && ov[group][key]) : ov[key];
+    return v === undefined ? fallback : v;
+  }
+
+  /* isPlain guards every level here, not just the top one: a figure typed by
+   * hand (or pasted into the JSON box) may hold `states.sad.kopf` as a string
+   * or a number, which checkStates() already reports as a problem - but this
+   * file runs 'use strict', and writing a property onto a primitive throws
+   * there instead of quietly doing nothing. A click that overrides a field
+   * must not crash the panel over a mistake the JSON card would explain. */
+  function isPlain(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+
+  function setOverride(layerId, group, key, value) {
+    var f = state.figure;
+    if (!isPlain(f.states)) f.states = {};
+    if (!isPlain(f.states[state.mood])) f.states[state.mood] = {};
+    var slot = f.states[state.mood];
+    if (!isPlain(slot[layerId])) slot[layerId] = {};
+    if (group) {
+      if (!isPlain(slot[layerId][group])) slot[layerId][group] = {};
+      slot[layerId][group][key] = value;
+    } else {
+      slot[layerId][key] = value;
+    }
+  }
+
+  /* Deletes one key and prunes what is left empty: the parameter object, then
+   * the layer's own entry. The mood itself is never pruned here, even down to
+   * {} - clearing every override a mood makes must not make the mood vanish
+   * out from under whoever has it selected. */
+  function clearOverride(layerId, group, key) {
+    var f = state.figure;
+    var tab = f && f.states && f.states[state.mood];
+    var ov = tab && tab[layerId];
+    if (!ov) return;
+    if (group) {
+      if (ov[group]) {
+        delete ov[group][key];
+        if (!Object.keys(ov[group]).length) delete ov[group];
+      }
+    } else {
+      delete ov[key];
+    }
+    if (!Object.keys(ov).length) delete tab[layerId];
+  }
+
+  /* Push the mood the panel has selected onto the mounted figure, with no
+   * blend - a string state, never the {from,to,since} shape setState()
+   * builds. That is deliberate: the panel is not asking for a transition, it
+   * is asking to see one mood, so what shows should be exactly it. */
+  function applyMoodToFig() {
+    if (!state.fig) return;
+    state.fig.state = state.mood;
+    state.fig._stateMix = state.mood;
+    if (!state.fig.playing) state.fig.render(state.fig.time);
+  }
+
+  /* ctx.state for anything that renders off the figure data directly -
+   * the contact sheet and (inline, see scanEvents below) the event scan. The
+   * player itself reads state.fig._stateMix through applyMoodToFig(). */
+  function moodCtxState() {
+    return state.mood === 'neutral' ? undefined : state.mood;
+  }
+
+  function moodSay(msg) {
+    var el = $('moodOut');
+    if (el) el.textContent = msg || '';
+  }
+
+  function setMood(name) {
+    state.mood = name;
+    refreshMoodEverything();
+  }
+
+  /* Called after anything that changes which mood is selected, or what moods
+   * there are - a switch, a create, a rename, a delete. Locked fields in the
+   * Layer and Motion cards depend on state.mood, so both are rebuilt, not
+   * only refreshed in place. */
+  function refreshMoodEverything() {
+    applyMoodToFig();
+    buildMoodCard();
+    buildLayerCard();
+    buildMotionControls();
+    refreshStill();
+    refreshSaveState();
+  }
+
+  var MOOD_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+  function createMood() {
+    if (!state.figure) return;
+    var raw = window.prompt('Name for the new mood - lowercase letters, digits, '
+      + '- and _, starting with a letter or digit, at most 32 characters:', '');
+    if (raw === null) return;
+    var name = raw.trim().toLowerCase();
+    if (name === 'neutral') {
+      moodSay('"neutral" is the layers as written - it cannot be a mood of its own.');
+      return;
+    }
+    if (!MOOD_NAME.test(name)) {
+      moodSay('"' + raw + '" is not a usable mood name.');
+      return;
+    }
+    if (state.figure.states && Object.prototype.hasOwnProperty.call(state.figure.states, name)) {
+      moodSay('"' + name + '" already exists.');
+      return;
+    }
+    if (!state.figure.states) state.figure.states = {};
+    state.figure.states[name] = {};
+    setMood(name);
+    moodSay('Created "' + name + '". Every field it does not change stays neutral.');
+  }
+
+  function renameMood() {
+    if (!state.figure || state.mood === 'neutral') return;
+    var old = state.mood;
+    var raw = window.prompt('New name for "' + old + '":', old);
+    if (raw === null) return;
+    var name = raw.trim().toLowerCase();
+    if (name === old) return;
+    if (name === 'neutral') {
+      moodSay('"neutral" is the layers as written - it cannot be a mood of its own.');
+      return;
+    }
+    if (!MOOD_NAME.test(name)) {
+      moodSay('"' + raw + '" is not a usable mood name.');
+      return;
+    }
+    if (state.figure.states && Object.prototype.hasOwnProperty.call(state.figure.states, name)) {
+      moodSay('"' + name + '" already exists.');
+      return;
+    }
+    state.figure.states[name] = state.figure.states[old];
+    delete state.figure.states[old];
+    state.mood = name;
+    refreshMoodEverything();
+    moodSay('Renamed "' + old + '" to "' + name + '".');
+  }
+
+  function deleteMood() {
+    if (!state.figure || state.mood === 'neutral') return;
+    var name = state.mood;
+    if (!window.confirm('Delete the mood "' + name + '"? Every difference it holds is lost.')) return;
+    if (state.figure.states) {
+      delete state.figure.states[name];
+      /* Leave states out of the file entirely once the last mood is gone,
+       * rather than an empty object nobody put there on purpose. */
+      if (!Object.keys(state.figure.states).length) delete state.figure.states;
+    }
+    state.mood = 'neutral';
+    refreshMoodEverything();
+    moodSay('Deleted "' + name + '".');
+  }
+
+  function buildMoodCard() {
+    var box = $('moodCtl');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!state.figure) {
+      box.appendChild(hintLine('No figure loaded.'));
+      return;
+    }
+
+    var names = Idle.stateNames(state.figure);
+    if (names.indexOf(state.mood) < 0) state.mood = 'neutral';
+
+    var selRow = document.createElement('div');
+    selRow.className = 'row';
+    var sel = document.createElement('select');
+    sel.className = 'sel';
+    for (var i = 0; i < names.length; i++) {
+      var o = document.createElement('option');
+      o.value = names[i];
+      o.textContent = names[i];
+      sel.appendChild(o);
+    }
+    sel.value = state.mood;
+    sel.addEventListener('change', function () { setMood(sel.value); });
+    selRow.appendChild(sel);
+    box.appendChild(selRow);
+
+    var btnRow = document.createElement('div');
+    btnRow.className = 'row';
+    var newBtn = document.createElement('button');
+    newBtn.type = 'button'; newBtn.className = 'btn'; newBtn.textContent = 'New';
+    newBtn.addEventListener('click', createMood);
+    var renBtn = document.createElement('button');
+    renBtn.type = 'button'; renBtn.className = 'btn'; renBtn.textContent = 'Rename';
+    renBtn.disabled = (state.mood === 'neutral');
+    renBtn.addEventListener('click', renameMood);
+    var delBtn = document.createElement('button');
+    delBtn.type = 'button'; delBtn.className = 'btn'; delBtn.textContent = 'Delete';
+    delBtn.disabled = (state.mood === 'neutral');
+    delBtn.addEventListener('click', deleteMood);
+    btnRow.appendChild(newBtn);
+    btnRow.appendChild(renBtn);
+    btnRow.appendChild(delBtn);
+    box.appendChild(btnRow);
+
+    var out = document.createElement('p');
+    out.id = 'moodOut';
+    out.className = 'out';
+    box.appendChild(out);
+
+    if (state.mood !== 'neutral') {
+      box.appendChild(hintLine('Editing "' + state.mood + '". Offset, tilt, hidden, '
+        + 'the picture and motion parameters below write into this mood only. '
+        + 'Pivot, parent, depth, role, blend, lag, opacity, alt and the rig '
+        + 'itself stay locked - every mood shares one rig.'));
+    }
+
+    var problems = Idle.checkStates(state.figure);
+    if (problems.length) {
+      var pre = document.createElement('pre');
+      pre.className = 'events';
+      pre.textContent = problems.join('\n');
+      box.appendChild(pre);
+    }
+  }
+
+  /* Small building blocks the Layer and Motion cards share for mood editing:
+   * a lock for a fixed field, and a reset button for an overridden one. */
+  var LOCK_HINT = 'Shared by every mood - switch to neutral to change this.';
+
+  function lockRow(row) {
+    var ctl = row.querySelector('select, input, textarea, button');
+    if (ctl) ctl.disabled = true;
+    row.classList.add('locked');
+    row.title = LOCK_HINT;
+    return row;
+  }
+
+  function resetBtn(layerId, group, key, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'reset';
+    b.textContent = '↺';
+    b.title = 'Reset ' + label + ' to the neutral value';
+    b.addEventListener('click', function () {
+      clearOverride(layerId, group, key);
+      refreshStill();
+      buildMoodCard();
+      buildLayerCard();
+      buildMotionControls();
+    });
+    return b;
+  }
+
+  function withReset(row, show, layerId, group, key, label) {
+    if (show) {
+      row.classList.add('withReset');
+      row.appendChild(resetBtn(layerId, group, key, label));
+    }
+    return row;
+  }
+
+  /* A number field on the same grid a slider or a picker uses, for tilt -
+   * degrees, signed, no natural slider range the way strength or period
+   * have one. */
+  function numberField(label, value, step, onChange, onSettle) {
+    var row = document.createElement('label');
+    row.className = 'field';
+    var t = document.createElement('span');
+    t.textContent = label;
+    var inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'txt';
+    inp.step = String(step);
+    inp.value = String(value);
+    inp.addEventListener('input', function () {
+      var v = parseFloat(inp.value);
+      if (isFinite(v)) onChange(v);
+    });
+    if (onSettle) inp.addEventListener('change', onSettle);
+    row.appendChild(t);
+    row.appendChild(inp);
+    return row;
+  }
+
+  function checkField(label, checked, onChange) {
+    var row = document.createElement('label');
+    row.className = 'field';
+    var t = document.createElement('span');
+    t.textContent = label;
+    var inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = !!checked;
+    inp.addEventListener('change', function () { onChange(inp.checked); });
+    row.appendChild(t);
+    row.appendChild(inp);
+    return row;
+  }
+  /* end of mood editing helpers */
+
+  /* ================================================================== *
    * Layer properties
    *
    * The five fields that used to need a text editor: what a layer hangs
@@ -1156,6 +1533,12 @@
     return null;
   }
 
+  /* A layer's own tilt, defaulted like idle.js's num() does - never NaN,
+   * never the string a bad hand-edit could leave behind. */
+  function layerTilt(L) {
+    return (typeof L.tilt === 'number' && isFinite(L.tilt)) ? L.tilt : 0;
+  }
+
   function buildLayerCard() {
     var box = $('layerCtl');
     box.innerHTML = '';
@@ -1165,6 +1548,13 @@
     if (!L) {
       box.appendChild(hintLine('Pick a layer in the list above.'));
       return;
+    }
+
+    var editingMood = state.mood !== 'neutral';
+    if (editingMood) {
+      box.appendChild(hintLine('Editing mood "' + state.mood + '". Pivot, parent, '
+        + 'depth, role, blend, lag, opacity and alt are the rig - locked here, '
+        + 'shared by every mood.'));
     }
 
     var layers = state.figure.layers || [];
@@ -1178,7 +1568,7 @@
     for (var i = 0; i < layers.length; i++) {
       if (!blocked[layers[i].id]) free.push(layers[i].id);
     }
-    g.appendChild(picker('parent', L.parent || '', free, '— none (root) —',
+    var parentRow = picker('parent', L.parent || '', free, '— none (root) —',
       function (v) {
         if (v) L.parent = v; else delete L.parent;
         /* The engine reads the chain out of the figure on every frame, so
@@ -1188,17 +1578,19 @@
         buildLayerCard();
         buildMotionControls();
         refreshStill();
-      }));
+      });
+    g.appendChild(editingMood ? lockRow(parentRow) : parentRow);
 
-    g.appendChild(picker('role', L.role || '', ROLES, '— none —',
+    var roleRow = picker('role', L.role || '', ROLES, '— none —',
       function (v) {
         if (v) L.role = v; else delete L.role;
         buildLayerList();
         buildLayerCard();
         refreshStill();
-      }));
+      });
+    g.appendChild(editingMood ? lockRow(roleRow) : roleRow);
 
-    g.appendChild(picker('blend', L.blend || 'normal', BLENDS, null,
+    var blendRow = picker('blend', L.blend || 'normal', BLENDS, null,
       function (v) {
         if (v && v !== 'normal') L.blend = v; else delete L.blend;
         /* mix-blend-mode is written once, while the stage is built. Writing
@@ -1206,16 +1598,18 @@
         var bx = boxOf(L.id);
         if (bx) bx.style.mixBlendMode = L.blend || '';
         refreshStill();
-      }));
+      });
+    g.appendChild(editingMood ? lockRow(blendRow) : blendRow);
 
     /* Out of the file at 1, because that is what the engine assumes anyway
      * and a figure.json full of "opacity": 1 is noise in a diff. */
-    g.appendChild(slider('opacity', L.opacity != null ? L.opacity : 1,
+    var opacityRow = slider('opacity', L.opacity != null ? L.opacity : 1,
       function (v) {
         if (v >= 1) delete L.opacity; else L.opacity = v;
-      }, 'opacity'));
+      }, 'opacity');
+    g.appendChild(editingMood ? lockRow(opacityRow) : opacityRow);
 
-    g.appendChild(textField('alt', L.alt || '', 'what this part is',
+    var altRow = textField('alt', L.alt || '', 'what this part is',
       function (v) {
         if (v) L.alt = v; else delete L.alt;
         /* Same story as blend: set on the <img> when the stage is built. */
@@ -1223,7 +1617,100 @@
         if (!bx) return;
         var im = bx.getElementsByTagName('img');
         for (var k = 0; k < im.length; k++) im[k].alt = L.alt || '';
-      }));
+      });
+    g.appendChild(editingMood ? lockRow(altRow) : altRow);
+
+    /* tilt and hidden: plain layer fields in neutral, an override in a mood -
+     * "mostly useful in a mood" per docs/figure-json.md, but a rig can carry
+     * a standing one too. */
+    var tiltBase = layerTilt(L);
+    var tiltOv = editingMood && hasOverride(L.id, null, 'tilt');
+    var tiltShown = editingMood ? overrideVal(L.id, null, 'tilt', tiltBase) : tiltBase;
+    var tiltRow = numberField('tilt', tiltShown, 0.1, function (v) {
+      if (editingMood) {
+        if (v === tiltBase) clearOverride(L.id, null, 'tilt');
+        else setOverride(L.id, null, 'tilt', v);
+      } else if (v === 0) {
+        delete L.tilt;
+      } else {
+        L.tilt = v;
+      }
+      refreshStill();
+    }, function () { buildLayerCard(); });
+    withReset(tiltRow, tiltOv, L.id, null, 'tilt', 'tilt');
+    g.appendChild(tiltRow);
+
+    var hidBase = L.hidden === true;
+    var hidOv = editingMood && hasOverride(L.id, null, 'hidden');
+    var hidShown = editingMood ? overrideVal(L.id, null, 'hidden', hidBase) : hidBase;
+    var hidRow = checkField('hidden', hidShown, function (v) {
+      if (editingMood) {
+        if (v === hidBase) clearOverride(L.id, null, 'hidden');
+        else setOverride(L.id, null, 'hidden', v);
+      } else if (v) {
+        L.hidden = true;
+      } else {
+        delete L.hidden;
+      }
+      refreshStill();
+      buildLayerCard();
+      buildLayerList();
+    });
+    withReset(hidRow, hidOv, L.id, null, 'hidden', 'hidden');
+    g.appendChild(hidRow);
+
+    /* offset has no field of its own even in neutral - it is dragged (Alt) or
+     * nudged (arrow keys) on the stage. In a mood it still is, but a mood
+     * also needs a way to see it and take it back, and dragging is not that,
+     * so it gets a read-only line with the reset button the other overridden
+     * fields have. */
+    if (editingMood) {
+      var offOv = hasOverride(L.id, null, 'offset');
+      var offNow = effectiveOffsetOf(L);
+      var offRow = document.createElement('div');
+      offRow.className = 'field';
+      var offLbl = document.createElement('span');
+      offLbl.textContent = 'offset';
+      var offVal = document.createElement('span');
+      offVal.className = 'val';
+      offVal.style.textAlign = 'left';
+      offVal.textContent = offNow[0] + ' / ' + offNow[1] + ' px - Alt-drag or arrow keys on stage';
+      offRow.appendChild(offLbl);
+      offRow.appendChild(offVal);
+      withReset(offRow, offOv, L.id, null, 'offset', 'offset');
+      g.appendChild(offRow);
+
+      /* The picture this mood shows for the layer. Ignored on a frames layer
+       * by the engine - the flipbook picks among frames - so there is
+       * nothing useful to offer there. */
+      if (!(L.frames && L.frames.length)) {
+        var srcOv = hasOverride(L.id, null, 'src');
+        var srcNow = overrideVal(L.id, null, 'src', '');
+        var srcRow = document.createElement('label');
+        srcRow.className = 'field';
+        var srcLbl = document.createElement('span');
+        srcLbl.textContent = 'picture';
+        srcRow.appendChild(srcLbl);
+        var srcCtl;
+        if (state.hasApi) {
+          srcCtl = buildSrcSelect(srcNow);
+        } else {
+          srcCtl = document.createElement('input');
+          srcCtl.type = 'text';
+          srcCtl.className = 'txt';
+          srcCtl.spellcheck = false;
+          srcCtl.value = srcNow;
+          srcCtl.placeholder = 'layers/....webp - blank means the neutral picture';
+        }
+        (function (ctl) {
+          function apply() { onMoodSrcChange(L, ctl.value); }
+          ctl.addEventListener('change', apply);
+        })(srcCtl);
+        srcRow.appendChild(srcCtl);
+        withReset(srcRow, srcOv, L.id, null, 'src', 'picture');
+        g.appendChild(srcRow);
+      }
+    }
 
     box.appendChild(g);
 
@@ -1231,17 +1718,86 @@
     if (msg) box.appendChild(hintLine(msg));
 
     if ((state.figure.layers || []).length > 1) {
-      var del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'btn wide';
-      armDangerButton(del, 'Remove this layer',
-        function () { return 'Really remove "' + L.id + '" and its image?'; },
-        function () { removeLayer(L); });
-      box.appendChild(del);
-      box.appendChild(hintLine('This deletes the layer’s image from the '
-        + 'figure folder as well. Leaving the file behind would put the layer '
-        + 'back on the next cut or upload.'));
+      if (editingMood) {
+        box.appendChild(hintLine('Remove this layer: locked while editing a mood - '
+          + 'layers are the rig, shared by every mood.'));
+      } else {
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn wide';
+        armDangerButton(del, 'Remove this layer',
+          function () { return 'Really remove "' + L.id + '" and its image?'; },
+          function () { removeLayer(L); });
+        box.appendChild(del);
+        box.appendChild(hintLine('This deletes the layer’s image from the '
+          + 'figure folder as well. Leaving the file behind would put the layer '
+          + 'back on the next cut or upload.'));
+      }
     }
+  }
+
+  /* A select of the figure's own layer files, prefixed the way figure.json
+   * paths always are ("layers/..."), plus "(neutral picture)" for no
+   * override. Used only when tools/serve.py answers /_files - a plain
+   * `python -m http.server` gets a text input instead, in buildLayerCard. */
+  function buildSrcSelect(current) {
+    var sel = document.createElement('select');
+    sel.className = 'sel';
+    var o0 = document.createElement('option');
+    o0.value = '';
+    o0.textContent = '(neutral picture)';
+    sel.appendChild(o0);
+    var files = state.srcOptions || [];
+    for (var i = 0; i < files.length; i++) {
+      var o = document.createElement('option');
+      o.value = files[i];
+      o.textContent = files[i];
+      sel.appendChild(o);
+    }
+    if (current && files.indexOf(current) < 0) {
+      var keep = document.createElement('option');
+      keep.value = current;
+      keep.textContent = current + '  (in the file, not listed)';
+      sel.insertBefore(keep, sel.children[1] || null);
+    }
+    sel.value = current || '';
+    return sel;
+  }
+
+  /* Every file figures/<name>/layers/ holds right now, for the mood picture
+   * select. Refreshed whenever a figure mounts; a figure with no write
+   * server (state.hasApi false) falls back to a text field instead, so this
+   * is left null there rather than fetched and silently ignored. */
+  function refreshSrcOptions() {
+    if (!state.hasApi || !state.name) { state.srcOptions = null; return Promise.resolve(); }
+    return figureFiles(state.name).then(function (d) {
+      state.srcOptions = (d.layers || []).map(function (f) { return 'layers/' + f; });
+      buildLayerCard();
+    });
+  }
+
+  /* A mood picture only ever shows once the figure it belongs to has an <img>
+   * for it (the DOM) and an entry in the image bank (the canvas work) - both
+   * built once, at mount, from every state src a layer can show. A src typed
+   * or picked here after that has neither, so both have to be rebuilt: the
+   * stage remounts (imagesOf() sees the new override and gets its <img> this
+   * time) and the image bank reloads the same way mounting a figure does. */
+  function onMoodSrcChange(L, val) {
+    var v = (val || '').trim();
+    if (!v) clearOverride(L.id, null, 'src');
+    else setOverride(L.id, null, 'src', v);
+    /* A crop belongs to the src it was cut for - the studio's Export writes
+     * one, by hand there is none - so a picture typed in here always shows
+     * at full canvas, and any crop left over from a different picture would
+     * be wrong for this one. */
+    clearOverride(L.id, null, 'crop');
+    rebuildStage();
+    buildLayerCard();
+    var mine = ++imageLoads;
+    state.images = null;
+    Idle.loadImages(state.figure, state.base)
+      .then(function (imgs) { if (mine === imageLoads) state.images = imgs; })
+      .catch(function (e) { say(String((e && e.message) || e)); });
   }
 
   /* ------------------------------------------------------------------ *
@@ -1382,6 +1938,10 @@
     state.fig.pointerY = py;
     state.fig.time = t;
     applyHidden();
+    /* The constructor always mounts at neutral - put back whichever mood the
+     * panel is showing, or a rebuild (a parent change, a motion added, a
+     * layer removed) would silently drop back to neutral on screen. */
+    applyMoodToFig();
     if (wasPlaying) state.fig.play(); else state.fig.render(t);
     /* The constructor fits the new stage and writes its own transform, so
      * the zoom and pan have to be put back on top of it. */
@@ -1429,7 +1989,11 @@
     opacity:    [0, 1, 0.01]
   };
 
-  function slider(label, value, onChange, key) {
+  /* onSettle: an optional extra callback for the drag's end (the 'change'
+   * event, not 'input'). Mood editing needs it to refresh a reset button
+   * that only appears once an override exists - rebuilding the whole card on
+   * every 'input' would pull the slider out from under a drag in progress. */
+  function slider(label, value, onChange, key, onSettle) {
     var r = RANGES[key] || [0, 10, 0.01];
     var row = document.createElement('label');
     row.className = 'slider';
@@ -1452,6 +2016,7 @@
       onChange(v);
       refreshStill();
     });
+    if (onSettle) inp.addEventListener('change', onSettle);
 
     row.appendChild(t); row.appendChild(inp); row.appendChild(out);
     return row;
@@ -1492,7 +2057,15 @@
       return;
     }
 
-    /* Layer-level values first: how deep it sits, how far it lags. */
+    var editingMood = state.mood !== 'neutral';
+    if (editingMood) {
+      box.appendChild(hintLine('Editing mood "' + state.mood + '". Motion '
+        + 'parameters below write into this mood; depth, extra lag and '
+        + 'whole motion blocks are the rig - locked here.'));
+    }
+
+    /* Layer-level values first: how deep it sits, how far it lags. Neither
+     * is an override key a mood may carry - both are the rig. */
     var g0 = document.createElement('div');
     g0.className = 'grp';
     var h0 = document.createElement('h3');
@@ -1501,10 +2074,12 @@
     sp.textContent = L.parent ? ('  child of ' + L.parent) : '  root';
     h0.appendChild(sp);
     g0.appendChild(h0);
-    g0.appendChild(slider('depth', L.depth != null ? L.depth : 0,
-      function (v) { L.depth = v; }, 'depth'));
-    g0.appendChild(slider('extra lag', L.lag || 0,
-      function (v) { L.lag = v; }, 'lag'));
+    var depthRow = slider('depth', L.depth != null ? L.depth : 0,
+      function (v) { L.depth = v; }, 'depth');
+    g0.appendChild(editingMood ? lockRow(depthRow) : depthRow);
+    var lagRow = slider('extra lag', L.lag || 0,
+      function (v) { L.lag = v; }, 'lag');
+    g0.appendChild(editingMood ? lockRow(lagRow) : lagRow);
     box.appendChild(g0);
 
     var ms = L.motions || [];
@@ -1519,7 +2094,8 @@
         kill.type = 'button';
         kill.className = 'x';
         kill.textContent = '×';
-        kill.title = 'remove this motion';
+        kill.title = editingMood ? LOCK_HINT : 'remove this motion';
+        kill.disabled = editingMood;
         kill.addEventListener('click', function () {
           ms.splice(mi, 1);
           /* An empty motions array is the same as none, and the shorter of
@@ -1535,15 +2111,26 @@
         h.appendChild(kill);
         g.appendChild(h);
 
-        /* loop or burst. Kept out of MOTION_PARAMS on purpose: that table
-         * lists numbers the engine reads through cfg, and the agreement test
-         * holds it to exactly those. This one is a word. */
+        /* loop or burst, and fade or hard cut: words, not numbers, kept out
+         * of MOTION_PARAMS on purpose (see the comments below) - but both are
+         * still parameters of the motion they sit on, so a mood may override
+         * either exactly like a numeric one. */
         if (m.type === 'flipbook') {
-          g.appendChild(picker('mode', m.mode || 'burst', ['loop', 'burst'],
-            null, function (v) {
+          var modeBase = m.mode || 'burst';
+          var modeOv = editingMood && hasOverride(L.id, m.type, 'mode');
+          var modeShown = editingMood ? overrideVal(L.id, m.type, 'mode', modeBase) : modeBase;
+          var modeRow = picker('mode', modeShown, ['loop', 'burst'], null, function (v) {
+            if (editingMood) {
+              if (v === modeBase) clearOverride(L.id, m.type, 'mode');
+              else setOverride(L.id, m.type, 'mode', v);
+              buildMotionControls();
+            } else {
               m.mode = v;
-              refreshStill();
-            }));
+            }
+            refreshStill();
+          });
+          withReset(modeRow, modeOv, L.id, m.type, 'mode', 'mode');
+          g.appendChild(modeRow);
         }
 
         /* Only flipbook. charge reads no frames at all - it drives opacity,
@@ -1559,11 +2146,23 @@
          * word, not a number, and the agreement test excludes it the same
          * way. */
         if (m.type === 'drift') {
-          g.appendChild(picker('fade', m.fadeOut === false ? 'hard cut' : 'fade out',
-            ['fade out', 'hard cut'], null, function (v) {
+          var fadeBase = m.fadeOut === false ? 'hard cut' : 'fade out';
+          var fadeOv = editingMood && hasOverride(L.id, m.type, 'fadeOut');
+          var fadeBool = editingMood ? overrideVal(L.id, m.type, 'fadeOut', m.fadeOut !== false) : (m.fadeOut !== false);
+          var fadeShown = fadeBool ? 'fade out' : 'hard cut';
+          var fadeRow = picker('fade', fadeShown, ['fade out', 'hard cut'], null, function (v) {
+            if (editingMood) {
+              var vb = (v !== 'hard cut');
+              if (vb === (m.fadeOut !== false)) clearOverride(L.id, m.type, 'fadeOut');
+              else setOverride(L.id, m.type, 'fadeOut', vb);
+              buildMotionControls();
+            } else {
               m.fadeOut = (v !== 'hard cut');
-              refreshStill();
-            }));
+            }
+            refreshStill();
+          });
+          withReset(fadeRow, fadeOv, L.id, m.type, 'fadeOut', 'fade');
+          g.appendChild(fadeRow);
         }
 
         var known = MOTION_PARAMS[m.type] || {};
@@ -1582,9 +2181,20 @@
         for (var q = 0; q < keys.length; q++) {
           (function (key) {
             var isRead = Object.prototype.hasOwnProperty.call(known, key);
-            var val = (typeof m[key] === 'number') ? m[key] : known[key];
+            var base = (typeof m[key] === 'number') ? m[key] : known[key];
             var label = isRead ? key : key + ' (ignored)';
-            g.appendChild(slider(label, val, function (v) { m[key] = v; }, key));
+            var ov = editingMood && hasOverride(L.id, m.type, key);
+            var shown = editingMood ? overrideVal(L.id, m.type, key, base) : base;
+            var row = slider(label, shown, function (v) {
+              if (editingMood) {
+                if (v === base) clearOverride(L.id, m.type, key);
+                else setOverride(L.id, m.type, key, v);
+              } else {
+                m[key] = v;
+              }
+            }, key, editingMood ? function () { buildMotionControls(); } : null);
+            withReset(row, ov, L.id, m.type, key, key);
+            g.appendChild(row);
           })(keys[q]);
         }
         box.appendChild(g);
@@ -1603,7 +2213,8 @@
     /* Add a block. Only the types this layer does not carry yet: two blinks
      * on one layer read the same clock and fire as one event, and two drifts
      * make the layer jump between two rises, which is the flicker the
-     * agreement test already refuses. */
+     * agreement test already refuses. Locked while editing a mood - a mood
+     * changes a motion's numbers, it never adds or removes a whole block. */
     var used = {}, key;
     for (i = 0; i < ms.length; i++) used[ms[i].type] = true;
     var spare = [];
@@ -1637,6 +2248,11 @@
       pick.appendChild(none);
       pick.disabled = true;
       add.disabled = true;
+    }
+    if (editingMood) {
+      pick.disabled = true;
+      add.disabled = true;
+      pick.title = add.title = LOCK_HINT;
     }
 
     add.addEventListener('click', function () {
@@ -2030,10 +2646,26 @@
    * it moves.
    * ------------------------------------------------------------------ */
 
-  function offsetOf(L) {
+  /* The layer's own offset, ignoring any mood - what a mood's value replaces,
+   * per docs/figure-json.md ("a mood's value replaces the layer's, it does
+   * not add to it"). */
+  function baseOffsetOf(L) {
     var o = L.offset;
     return [(o && +o[0]) || 0, (o && +o[1]) || 0];
   }
+
+  /* What the panel shows and what dragging or nudging moves: the current
+   * mood's override when there is one, the layer's own offset otherwise -
+   * "show values as the mood sees them". */
+  function effectiveOffsetOf(L) {
+    var ov = moodOverrideOf(L.id);
+    if (ov && Array.isArray(ov.offset) && ov.offset.length === 2) {
+      return [(+ov.offset[0]) || 0, (+ov.offset[1]) || 0];
+    }
+    return baseOffsetOf(L);
+  }
+
+  function offsetOf(L) { return effectiveOffsetOf(L); }
 
   function offsetLabel(L) {
     var o = offsetOf(L);
@@ -2045,15 +2677,33 @@
   /* Written back at one decimal. A drag on a stage scaled to a third of the
    * canvas produces numbers like 2.6666667, and figure.json is read by
    * people. The running total is kept in stage coordinates, not here, so
-   * rounding cannot make a slow drag stand still. */
+   * rounding cannot make a slow drag stand still.
+   *
+   * In a mood this writes only the override: the new value is compared
+   * against the layer's own offset (not against zero), because a mood's
+   * offset legitimately replaces a non-zero cutting correction with [0, 0] -
+   * that is a real difference, not "no override". The override is only
+   * dropped once dragging brings it back to exactly what neutral already
+   * shows. */
   function nudgeLayer(L, dx, dy) {
-    var o = offsetOf(L);
+    var o = effectiveOffsetOf(L);
     var x = Math.round((o[0] + dx) * 10) / 10;
     var y = Math.round((o[1] + dy) * 10) / 10;
-    if (x === 0 && y === 0) delete L.offset;
-    else L.offset = [x, y];
+    if (state.mood !== 'neutral') {
+      var base = baseOffsetOf(L);
+      if (x === base[0] && y === base[1]) clearOverride(L.id, null, 'offset');
+      else setOverride(L.id, null, 'offset', [x, y]);
+    } else if (x === 0 && y === 0) {
+      delete L.offset;
+    } else {
+      L.offset = [x, y];
+    }
     refreshStill();
     buildLayerList();
+    /* The reset button beside the read-only offset line in the Layer card
+     * only exists while a mood is selected, and only there does dragging
+     * need to make it appear or disappear. */
+    if (state.mood !== 'neutral') buildLayerCard();
     refreshSaveState();
   }
 
@@ -2158,7 +2808,9 @@
       var L = nearestPivot(p[0], p[1]);
       if (L) {
         state.selected = L.id;
-        state.dragging = true;
+        /* The pivot is the rig, fixed for every mood - selecting the layer
+         * by its dot still works, dragging it does not. */
+        state.dragging = (state.mood === 'neutral');
         buildLayerList();
         buildLayerCard();
         buildMotionControls();
@@ -2337,7 +2989,10 @@
       tg.clearRect(0, 0, SHEET_CELL, SHEET_CELL);
       Idle.drawFrame(tg, state.figure, state.images, t, {
         width: SHEET_CELL, height: SHEET_CELL,
-        background: false
+        background: false,
+        /* The sheet judges whichever mood the panel has selected, with no
+         * blend - the same thing the stage shows. */
+        ctx: { state: moodCtxState() }
       });
       var x = (i % SHEET_COLS) * SHEET_CELL;
       var y = Math.floor(i / SHEET_COLS) * SHEET_CELL;
@@ -2404,7 +3059,15 @@
      * the min of the range. */
     for (i = 0; i < n; i++) {
       var t = i / fps;
-      var st = Idle.solve(f, t, { pointerX: 0, pointerY: 0 });
+      /* Whichever mood the panel has selected, with no blend - `state` here
+       * is the object this function closes over (state.mood is undefined,
+       * i.e. neutral, for a caller - such as the agreement test - that never
+       * sets one), read directly rather than through a helper so this stays
+       * one self-contained block a test can lift out and run on its own. */
+      var st = Idle.solve(f, t, {
+        pointerX: 0, pointerY: 0,
+        state: (state.mood && state.mood !== 'neutral') ? state.mood : undefined
+      });
       var by = {};
       for (j = 0; j < st.length; j++) by[st[j].id] = st[j];
 
@@ -2658,6 +3321,33 @@
         }
       }
     }
+    /* A mood's own offset and gaze/drift overrides are canvas pixels too,
+     * for the same reason as above - they do not shrink with f.size on their
+     * own just because the layer they sit over did. */
+    var states = figure.states;
+    if (states) {
+      for (var name in states) {
+        if (!Object.prototype.hasOwnProperty.call(states, name)) continue;
+        var tab = states[name];
+        if (!tab || typeof tab !== 'object') continue;
+        for (var id in tab) {
+          if (!Object.prototype.hasOwnProperty.call(tab, id)) continue;
+          var ov = tab[id];
+          if (!ov || typeof ov !== 'object') continue;
+          if (Array.isArray(ov.offset) && ov.offset.length === 2) {
+            ov.offset = [r1(ov.offset[0] * sx), r1(ov.offset[1] * sy)];
+          }
+          if (ov.gaze && typeof ov.gaze === 'object' && typeof ov.gaze.pixels === 'number') {
+            ov.gaze.pixels = r1(ov.gaze.pixels * sx);
+          }
+          if (ov.drift && typeof ov.drift === 'object') {
+            if (typeof ov.drift.dx === 'number') ov.drift.dx = r1(ov.drift.dx * sx);
+            if (typeof ov.drift.dy === 'number') ov.drift.dy = r1(ov.drift.dy * sy);
+            if (typeof ov.drift.wander === 'number') ov.drift.wander = r1(ov.drift.wander * sx);
+          }
+        }
+      }
+    }
     return figure;
   }
   /* end of export pixel scaling */
@@ -2690,17 +3380,27 @@
     var uses = {}, order = [];
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
-      var srcs = (L.frames && L.frames.length) ? L.frames : [L.src];
       var bank = state.images[L.id] || [];
-      for (var k = 0; k < srcs.length; k++) {
-        if (!srcs[k] || !bank[k]) continue;
-        var u = uses[srcs[k]];
+      /* Every picture the layer can show, moods included - the same list
+       * imagesOf() hands loadImages() and the DOM builder, so a mood picture
+       * is exported and cropped exactly as its own layer's src is. A frames
+       * layer's list is just its frames, as before: a mood cannot swap a
+       * picture on one of those, so this changes nothing for it. */
+      var pics = Idle.imagesOf(L, src);
+      for (var k = 0; k < pics.length; k++) {
+        var p = pics[k];
+        if (!p.src) continue;
+        var img = (bank.bySrc && bank.bySrc[p.src]) || bank[k];
+        if (!img) continue;
+        var u = uses[p.src];
         if (!u) {
           /* Where the file sits on the canvas now: all of it, or the crop it
-           * already carries if this figure was cut before. */
-          u = uses[srcs[k]] = { img: bank[k], screen: true,
-                                place: Idle.cropOf(L, k) || [0, 0, w, h] };
-          order.push(srcs[k]);
+           * already carries if this figure was cut before - the layer's own
+           * for its own file, a mood's override for one only a mood shows,
+           * exactly what imagesOf() itself resolves when two moods share a
+           * file. */
+          u = uses[p.src] = { img: img, screen: true, place: p.crop || [0, 0, w, h] };
+          order.push(p.src);
         }
         if (L.blend !== 'screen') u.screen = false;
       }
@@ -2821,6 +3521,25 @@
         } else if (FL.src) {
           if (cropOfPath[FL.src]) FL.crop = cropOfPath[FL.src];
           if (renamed[FL.src]) FL.src = renamed[FL.src];
+        }
+      }
+
+      /* A mood's own src is a picture too, cut and renamed the same way -
+       * `f.states` is already a deep copy (f came off JSON.parse(JSON.
+       * stringify(state.figure))), so this only ever touches the export. */
+      if (f.states) {
+        for (var moodName in f.states) {
+          if (!Object.prototype.hasOwnProperty.call(f.states, moodName)) continue;
+          var tab = f.states[moodName];
+          if (!tab || typeof tab !== 'object') continue;
+          for (var layerId in tab) {
+            if (!Object.prototype.hasOwnProperty.call(tab, layerId)) continue;
+            var ov = tab[layerId];
+            if (!ov || typeof ov !== 'object' || typeof ov.src !== 'string' || !ov.src) continue;
+            delete ov.crop;
+            if (cropOfPath[ov.src]) ov.crop = cropOfPath[ov.src];
+            if (renamed[ov.src]) ov.src = renamed[ov.src];
+          }
         }
       }
 
@@ -4064,7 +4783,12 @@
         var im = box.getElementsByTagName('img');
         var visible = null;
         for (var k = 0; k < im.length; k++) {
-          if (im[k].style.display !== 'none') visible = im[k];
+          /* Which picture is actually on screen right now - idle.js toggles
+           * `visibility`, never `display`, so a layer with more than one
+           * <img> (a frames layer, or one with mood pictures) used to have
+           * this pick the LAST node every time regardless of which one was
+           * shown, because style.display stays '' on every one of them. */
+          if (im[k].style.visibility !== 'hidden') visible = im[k];
           im[k].style.visibility = on ? 'hidden' : '';
         }
         if (on && visible) {
