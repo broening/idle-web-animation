@@ -4,9 +4,9 @@
     {
       "name": "studio",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["tools/serve.py", "5173"],
+      "runtimeArgs": ["tools/serve.py"],
       "port": 5173,
-      "url": "http://localhost:5173"
+      "autoPort": true
     }
   ]
 }
