@@ -28,13 +28,6 @@
     border: 1px solid rgba(255,255,255,.25); border-radius: 8px;
     padding: 7px 12px; background: rgba(0,0,0,.35); }
   .bar a:hover { background: rgba(255,255,255,.12); }
-  .moods { display: flex; gap: 6px; }
-  .moods button { color: #e6e9ee; text-decoration: none; font-weight: 600;
-    font: inherit; border: 1px solid rgba(255,255,255,.25); border-radius: 8px;
-    padding: 7px 12px; background: rgba(0,0,0,.35); cursor: pointer; }
-  .moods button:hover { background: rgba(255,255,255,.12); }
-  .moods button[aria-pressed="true"] { background: #e6e9ee; color: #0d0f13;
-    border-color: #e6e9ee; }
   .tag { position: fixed; left: 20px; bottom: 18px; z-index: 3; max-width: 30rem;
     color: #cdd3db; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
   .tag b { color: #fff; }
@@ -48,7 +41,6 @@
 <div class="bar">
   <h1>idle-web-animation <span>— 2D idle animation for the web</span></h1>
   <div class="grow"></div>
-  <div class="moods" id="moods" role="group" aria-label="Mood" hidden></div>
   <a href="studio/">Open the studio</a>
   <a href="https://github.com/broening/idle-web-animation">View on GitHub</a>
 </div>
@@ -73,29 +65,6 @@ for 2D cutout character animation. One JSON file, no engine, no build step.</p>
       window.addEventListener('resize', function () { f.fit(); });
       var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (still) { f.seek(2.0); } else { f.play(); }
-
-      /* Mood buttons. A figure with no moods lists only "neutral", and the
-       * whole group stays hidden - no button for a mood that does not exist. */
-      var names = Idle.stateNames(fig);
-      if (names.length > 1) {
-        var box = document.getElementById('moods');
-        var buttons = [];
-        names.forEach(function (name) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.textContent = name.charAt(0).toUpperCase() + name.slice(1);
-          btn.setAttribute('aria-pressed', name === f.state ? 'true' : 'false');
-          btn.addEventListener('click', function () {
-            if (!f.setState(name)) return;
-            buttons.forEach(function (b) {
-              b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
-            });
-          });
-          buttons.push(btn);
-          box.appendChild(btn);
-        });
-        box.hidden = false;
-      }
     }).catch(function (e) {
       host.innerHTML = '<p style="position:absolute;inset:0;display:flex;'
         + 'align-items:center;justify-content:center;color:#aab2bd">'
