@@ -199,17 +199,22 @@ zip someone unpacks and opens in OBS with **Local file**.
 
 1. In the studio, pick the figure and open the **Export** card.
 2. Pick a **size**, fill in the **OBS package** block (logo, start mood,
-   credit, licence) and click **OBS package (zip)**.
+   credit, licence, guide language) and click **OBS package (zip)**.
 3. Hand over `<figure>-obs.zip`.
 
 The zip holds `obs.html` (figure, player and scene glue all inline),
-`layers/`, the logo if you chose one, `ANLEITUNG.txt` with the exact OBS steps
-and the figure's real width and height, and `LICENSE.txt` when a licence is
+`layers/`, the logo if you chose one, a guide with the exact OBS steps and
+the figure's real width and height, and `LICENSE.txt` when a licence is
 chosen. The figure's background is never packed; the page is transparent.
+
+**guide language** decides the text files: English (the default) writes
+`README.txt` and an English `LICENSE.txt`; Deutsch writes `ANLEITUNG.txt` and
+a `LICENSE.txt` in German and English. The studio remembers the choice on
+this computer, like the credit.
 
 A logo also ships as `logo.html`, a transparent CSS-only page with just the
 logo and its effects, added as a second Browser source so it can be moved,
-scaled and cropped in OBS; `ANLEITUNG.txt` gives its source size. Tick
+scaled and cropped in OBS; the guide gives its source size. Tick
 **logo inside figure** in the studio to bake it into `obs.html` as well.
 
 Moods and scene names work as in Part A. The camera avatar does not: it needs

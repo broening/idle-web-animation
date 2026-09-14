@@ -3256,7 +3256,7 @@
   function canvasToU8(canvas, mime, q) {
     return new Promise(function (res, rej) {
       canvas.toBlob(function (b) {
-        if (!b) { rej(new Error('canvas gab kein Bild zurueck')); return; }
+        if (!b) { rej(new Error('the canvas returned no picture')); return; }
         b.arrayBuffer().then(function (ab) { res(new Uint8Array(ab)); }, rej);
       }, mime, q);
     });
@@ -3396,7 +3396,7 @@
    * fresh deep copy - state.figure is never touched by an export. */
   function buildExportPipeline(opts) {
     opts = opts || {};
-    if (!state.images) return Promise.reject(new Error('Bilder sind noch nicht geladen.'));
+    if (!state.images) return Promise.reject(new Error('The pictures are not loaded yet.'));
 
     var target = opts.target || 0;
     var includeBackground = opts.includeBackground !== false;
@@ -3625,7 +3625,7 @@
       out.textContent = files.length + ' files, ' + Math.round(blob.size / 1024) +
         ' KB. Decoded layers ' + mb(res.stats.before) + ' -> ' + mb(res.stats.after) + '.';
     }).catch(function (e) {
-      out.textContent = 'Export fehlgeschlagen: ' + ((e && e.message) || e);
+      out.textContent = 'Export failed: ' + ((e && e.message) || e);
     });
   }
 
@@ -3828,6 +3828,16 @@
     try { window.localStorage.setItem(OBS_CREDIT_KEY, v); } catch (e) { /* nothing lost */ }
   }
 
+  var OBS_LANG_KEY = 'idle-studio-obs-lang';
+
+  function readObsLang() {
+    try { return window.localStorage.getItem(OBS_LANG_KEY) || ''; } catch (e) { return ''; }
+  }
+
+  function writeObsLang(v) {
+    try { window.localStorage.setItem(OBS_LANG_KEY, v); } catch (e) { /* English next time */ }
+  }
+
   /* The actual build, once addons/obs/package.js is known to be on the
    * page. Kept apart from the click handler so a missing addon can bail out
    * before any of this - the fetches, the pipeline, the encoding - ever
@@ -3837,6 +3847,7 @@
     var startState = $('obsMood') ? $('obsMood').value : 'neutral';
     var credit = $('obsCredit') ? $('obsCredit').value : '';
     var license = $('obsLicense') ? $('obsLicense').value : '';
+    var lang = $('obsLang') ? $('obsLang').value : 'en';
     var wipe = $('obsWipe').checked, glow = $('obsGlow').checked, gleam = $('obsGleam').checked;
     var inFigure = obsLogoInFigure();
     var v = obsSliderValues();
@@ -3880,7 +3891,8 @@
               startState: startState,
               credit: credit,
               license: license,
-              date: todayISO()
+              date: todayISO(),
+              lang: lang
             };
 
             var problems = IdleObsPackage.validate(opts);
@@ -3913,12 +3925,12 @@
 
   function buildObsPackageZip() {
     if (!state.figure || !state.name) { obsSay('Load a figure first.'); return; }
-    if (!state.images) { obsSay('Bilder sind noch nicht geladen.'); return; }
+    if (!state.images) { obsSay('The pictures are not loaded yet.'); return; }
 
     obsSay('loading addon...');
     loadObsPackageScript().then(function (IdleObsPackage) {
       runObsPackage(IdleObsPackage).catch(function (e) {
-        obsSay('Export fehlgeschlagen: ' + ((e && e.message) || e));
+        obsSay('Export failed: ' + ((e && e.message) || e));
       });
     }, function () {
       /* The one message the contract asks for by name, so a session running
@@ -3956,6 +3968,16 @@
     $('obsCredit').value = readObsCredit();
     $('obsCredit').addEventListener('input', function () {
       writeObsCredit(this.value);
+    });
+
+    /* English unless this computer chose otherwise once. The studio on
+     * GitHub Pages and a local one are different origins, so each keeps its
+     * own answer: a German package on the machine that wants one, English
+     * for everyone else. */
+    var lang = readObsLang();
+    $('obsLang').value = (lang === 'de') ? 'de' : 'en';
+    $('obsLang').addEventListener('change', function () {
+      writeObsLang(this.value);
     });
 
     $('obsBtn').addEventListener('click', buildObsPackageZip);
@@ -4145,7 +4167,7 @@
               }
               /* Asked for a named truth that is not there. Say so, rather
                * than silently auto-matching behind an unticked checkbox. */
-              rows.push({ name: file.name, truth: want + ' (nicht gefunden)',
+              rows.push({ name: file.name, truth: want + ' (not found)',
                           shape: NaN, place: NaN, margin: null });
               return;
             }
@@ -5265,7 +5287,7 @@
        * canvas can still be 0 wide here - and toBlob then hands back null,
        * which made URL.createObjectURL throw. */
       if (!c.width || !c.height) {
-        $('exportOut').textContent = 'Bilder sind noch nicht geladen.';
+        $('exportOut').textContent = 'The pictures are not loaded yet.';
         return;
       }
       c.toBlob(function (b) {

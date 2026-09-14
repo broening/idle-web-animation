@@ -6,7 +6,8 @@
  * idle.css and scene.js, the logo settings) and gets back the text files that
  * go into the zip next to the pictures:
  *
- *   IdleObsPackage.build(opts)    -> [{ name, text }]   obs.html, logo.html?, ANLEITUNG.txt, LICENSE.txt?
+ *   IdleObsPackage.build(opts)    -> [{ name, text }]   obs.html, logo.html?, README.txt (opts.lang 'en',
+ *                                                        the default) or ANLEITUNG.txt ('de'), LICENSE.txt?
  *   IdleObsPackage.validate(opts) -> [problem strings]  [] when build() will succeed
  *
  * The contract, field by field, is in gates/PLAN-obs-package.md. Since L6 a
@@ -43,6 +44,19 @@
 
   var LICENSES = { 'CC-BY-4.0': true };
   var LICENSE_URL = 'https://creativecommons.org/licenses/by/4.0/';
+
+  /* The language of the text files a person reads: the guide and the
+   * licence. English is the default, because a package travels to people
+   * who share no language with whoever built it; German is the other one
+   * written so far. The guide's file name follows the language, so nobody
+   * opens ANLEITUNG.txt expecting English. obs.html and logo.html carry no
+   * visible text either way. */
+  var LANGS = { en: true, de: true };
+  var GUIDE_FILE = { en: 'README.txt', de: 'ANLEITUNG.txt' };
+
+  function langOf(opts) {
+    return opts && opts.lang === 'de' ? 'de' : 'en';
+  }
 
   /* Same alphabet as STATE_NAME in player/idle.js. Kept as a copy on purpose:
    * the builder receives idle.js as a string for inlining and never runs it,
@@ -249,6 +263,10 @@
 
     if (opts.date !== undefined && opts.date !== '' && !(typeof opts.date === 'string' && DATE.test(opts.date))) {
       p.push('date must look like 2026-09-13');
+    }
+
+    if (opts.lang !== undefined && opts.lang !== '' && !(typeof opts.lang === 'string' && hasOwn(LANGS, opts.lang))) {
+      p.push('lang "' + String(opts.lang) + '" is not supported (en or de)');
     }
 
     return p;
@@ -696,7 +714,7 @@
       '  Player code: idle-web-animation, MIT License.',
       opts.date ? '  Built ' + opts.date + '.' : '',
       '-->',
-      '<html lang="de">',
+      '<html lang="' + langOf(opts) + '">',
       '<head>',
       '<meta charset="utf-8">',
       credit ? '<meta name="author" content="' + htmlText(credit) + '">' : '',
@@ -779,7 +797,7 @@
       '  Page code: idle-web-animation, MIT License.',
       opts.date ? '  Built ' + opts.date + '.' : '',
       '-->',
-      '<html lang="de">',
+      '<html lang="' + langOf(opts) + '">',
       '<head>',
       '<meta charset="utf-8">',
       credit ? '<meta name="author" content="' + htmlText(credit) + '">' : '',
@@ -805,17 +823,29 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * ANLEITUNG.txt and LICENSE.txt
+   * The guide (README.txt or ANLEITUNG.txt) and LICENSE.txt
+   *
+   * Two hand-written texts, not one text with a lookup table: the sentences
+   * are short and plain in both languages, and word order differs enough
+   * that a table of fragments would read like a translation machine. The
+   * test holds both to the same sections and the same real numbers.
    * ------------------------------------------------------------------ */
 
   function creditLine(opts) {
     var credit = textOf(opts.credit);
     if (!credit) return '';
-    return 'Figur: ' + displayName(opts.name) + ' von ' + credit +
-      (opts.license === 'CC-BY-4.0' ? ', CC BY 4.0' : '');
+    var lic = opts.license === 'CC-BY-4.0' ? ', CC BY 4.0' : '';
+    return langOf(opts) === 'de'
+      ? 'Figur: ' + displayName(opts.name) + ' von ' + credit + lic
+      : 'Figure: ' + displayName(opts.name) + ' by ' + credit + lic;
   }
 
-  function buildGuide(opts) {
+  /* The folder list lines up its second column at 15 characters. */
+  function column(file) {
+    return file + (file.length < 14 ? new Array(15 - file.length).join(' ') : ' ') + ' ';
+  }
+
+  function buildGuideDe(opts) {
     var name = displayName(opts.name);
     var size = figureSize(opts.figure);
     var names = stateNamesOf(opts.figure);
@@ -992,11 +1022,206 @@
     return t.join('\r\n') + '\r\n';
   }
 
+  function buildGuideEn(opts) {
+    var name = displayName(opts.name);
+    var size = figureSize(opts.figure);
+    var names = stateNamesOf(opts.figure);
+    var start = startStateOf(opts);
+    var logo = opts.logo || null;
+    var hasLicense = opts.license === 'CC-BY-4.0';
+    var credit = creditLine(opts);
+    var moods = names.slice(1);
+    var t = [];
+
+    t.push(name + ' in OBS', '');
+    if (opts.date) t.push('Package built on ' + opts.date + '.', '');
+
+    t.push('WHAT IS IN THIS FOLDER', '');
+    t.push(column('obs.html') + 'the figure. This is the file you open in OBS.');
+    t.push(column('layers') + 'the pictures of the figure.');
+    if (logo) {
+      t.push(column('logo.html') + 'the logo as its own source in OBS.');
+      t.push(column(logo.file) + 'the logo as a picture.');
+    }
+    t.push(column(GUIDE_FILE.en) + 'this guide.');
+    if (hasLicense) t.push(column('LICENSE.txt') + 'the licence of the pictures.');
+    t.push('');
+    t.push('Important:');
+    t.push('Unzip the file first.');
+    t.push('Keep all files together in one folder.');
+    t.push('Never move obs.html on its own.');
+    t.push('The page looks for the pictures right next to it.');
+    t.push('Put the folder in a fixed place, for example');
+    t.push('Documents\\OBS\\' + name.replace(/[^A-Za-z0-9._-]+/g, '-') + '.');
+    t.push('');
+
+    /* OBS's own English labels, quoted exactly, so a reader can search for
+     * them in the dialog. */
+    function sourceSteps(label, file, width, height) {
+      t.push('1. Under "Sources", click the plus.');
+      t.push('2. Choose "Browser".');
+      t.push(label);
+      t.push('   Click "OK".');
+      t.push('4. Tick "Local file".');
+      t.push('5. Click "Browse".');
+      t.push('   Choose ' + file + ' from this folder.');
+      t.push('6. Width: ' + width);
+      t.push('7. Height: ' + height);
+      t.push('8. Untick "Shutdown source when not visible".');
+      t.push('9. Untick "Refresh browser when scene becomes active".');
+      t.push('10. Click "OK".');
+      t.push('');
+    }
+
+    t.push('ADD IT TO OBS (OBS 28 OR NEWER)', '');
+    sourceSteps('3. Enter a name, for example "' + name + '".', 'obs.html', size.width, size.height);
+    t.push(size.width + ' x ' + size.height + ' is the real size of the figure.');
+    t.push('That keeps it sharp.');
+    t.push('You do not need to set a background. The page is transparent.');
+    t.push('Without those two ticks, the figure does not restart at every scene change.');
+    t.push('');
+
+    if (logo) {
+      var ls = logoSourceSize(logo.aspect);
+      t.push('THE LOGO AS ITS OWN SOURCE', '');
+      if (logoInFigure(logo)) {
+        t.push('The logo is already inside obs.html.');
+        t.push('You only need this second source');
+        t.push('if you want to move the logo separately.');
+        t.push('Then it shows twice.');
+      } else {
+        t.push('The logo is not in obs.html.');
+        t.push('It gets a source of its own.');
+        t.push('That way you move and scale it in OBS however you like.');
+      }
+      t.push('');
+      sourceSteps('3. Enter the name "Logo".', 'logo.html', ls.width, ls.height);
+      t.push('To adjust the logo:');
+      t.push('- Move: drag the logo in the preview with the mouse.');
+      t.push('- Size: drag the red corners of its frame.');
+      t.push('- Crop: hold Alt and drag a red edge.');
+      t.push('- Order: "Logo" sits above the figure in the "Sources" list.');
+      t.push('  Otherwise the figure covers the logo.');
+      t.push('');
+      t.push('There is a free margin around the logo. The glow shines there.');
+      t.push('Do not crop that margin away.');
+      t.push('');
+      t.push('It also works without animation:');
+      t.push('In step 2, choose "Image" instead of "Browser".');
+      t.push('Then choose the file ' + logo.file + ' from this folder.');
+      t.push('');
+    }
+
+    t.push('MOODS', '');
+    if (moods.length) {
+      t.push('This figure knows these moods:');
+      t.push(names.join(', '));
+      t.push('');
+      t.push('It starts with: ' + start);
+      t.push('');
+      t.push('If a mood is a word in the name of a scene,');
+      t.push('the figure switches to that mood.');
+      t.push('Upper and lower case do not matter.');
+      t.push('');
+      t.push('Examples:');
+      t.push('  Scene "Pause ' + moods[0] + '"  ->  ' + moods[0]);
+      if (moods.length > 1) t.push('  Scene "Just Chatting ' + moods[1] + '"  ->  ' + moods[1]);
+      t.push('  Scene "Game"  ->  ' + start + ' (no mood word)');
+      t.push('');
+      t.push('Page permissions:');
+      t.push('So that the figure knows the scene right at the start,');
+      t.push('open the properties of the Browser source.');
+      t.push('Under "Page permissions", choose at least');
+      t.push('"Read access to user information".');
+      t.push('Without it, the mood only changes at the next scene change.');
+    } else {
+      t.push('This figure only has the mood "neutral".');
+      t.push('Scene names do not change it.');
+    }
+    t.push('');
+
+    if (credit) {
+      t.push('CREDIT', '');
+      if (hasLicense) {
+        t.push('The pictures of the figure are licensed under CC BY 4.0.');
+        t.push('You may show them, also on a stream that earns money.');
+        t.push('In return, you credit the author. Copy this line');
+        t.push('into your stream description, a panel or the end credits:');
+      } else {
+        t.push('Please credit the author of the figure, for example');
+        t.push('in your stream description, a panel or the end credits:');
+      }
+      t.push('');
+      t.push('  ' + credit);
+      t.push('');
+      if (hasLicense) {
+        t.push('Licence: ' + LICENSE_URL);
+        if (logo) t.push('The logo is not part of the licence. It remains its owner\'s mark.');
+        t.push('More in LICENSE.txt.');
+        t.push('');
+      }
+    }
+
+    t.push('IF SOMETHING DOES NOT WORK', '');
+    t.push('The source stays empty:');
+    t.push('  Is the zip unpacked? Is the "layers" folder next to obs.html?');
+    t.push('  Is "Local file" ticked?');
+    t.push('The figure is cut off or small:');
+    t.push('  Enter width ' + size.width + ' and height ' + size.height + ', as above.');
+    t.push('The figure restarts at every scene change:');
+    t.push('  Untick the two boxes from steps 8 and 9.');
+    if (moods.length) {
+      t.push('The mood does not change:');
+      t.push('  Is the word exactly like that in the scene name? "' + moods[0] + '-ish" does not count.');
+      t.push('  Check the page permissions, see above.');
+    }
+    if (logo) {
+      t.push('The logo is missing:');
+      t.push('  Is ' + logo.file + ' in the same folder as logo.html?');
+      t.push('  Is "Logo" above the figure in the "Sources" list?');
+    }
+    t.push('Nothing moves:');
+    t.push('  OBS 28 or newer? Help > About.');
+    t.push('  In the properties of the source, click');
+    t.push('  "Refresh cache of current page".');
+    t.push('');
+
+    return t.join('\r\n') + '\r\n';
+  }
+
+  /* The English licence text. The German LICENSE.txt ends with exactly this,
+   * so both languages of a package say the same thing in English. */
+  function licenseEnglish(t, credit, logo) {
+    t.push('The pictures of this figure (the folder "layers") are by');
+    t.push(credit + ',');
+    t.push('licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):');
+    t.push('');
+    t.push('    ' + LICENSE_URL);
+    t.push('');
+    t.push('You may share and adapt them, also commercially.');
+    t.push('Attribution means: name ' + credit + ' as the author,');
+    t.push('name and link the licence, and say whether you changed anything.');
+    t.push('');
+    t.push('Not covered by this licence:');
+    if (logo) {
+      t.push('- the logo (' + logo.file + '). It is its owner\'s mark and is not');
+      t.push('  under CC BY 4.0 unless the owner says so.');
+    }
+    t.push('- the program code in ' + (logo ? 'obs.html and logo.html' : 'obs.html') + ':');
+    t.push('  idle-web-animation, MIT License.');
+    t.push('');
+  }
+
   function buildLicense(opts) {
     var name = displayName(opts.name);
     var credit = textOf(opts.credit);
     var logo = opts.logo || null;
     var t = [];
+    if (langOf(opts) === 'en') {
+      t.push(name + ' - licence of the pictures', '');
+      licenseEnglish(t, credit, logo);
+      return t.join('\r\n') + '\r\n';
+    }
     t.push(name + ' - Lizenz der Bilder / licence of the pictures', '');
     t.push('DEUTSCH', '');
     t.push('Die Bilder dieser Figur (der Ordner "layers") sind von');
@@ -1019,33 +1244,17 @@
     t.push('  idle-web-animation, MIT License.');
     t.push('');
     t.push('ENGLISH', '');
-    t.push('The pictures of this figure (the folder "layers") are by');
-    t.push(credit + ',');
-    t.push('licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):');
-    t.push('');
-    t.push('    ' + LICENSE_URL);
-    t.push('');
-    t.push('You may share and adapt them, also commercially.');
-    t.push('Attribution means: name ' + credit + ' as the author,');
-    t.push('name and link the licence, and say whether you changed anything.');
-    t.push('');
-    t.push('Not covered by this licence:');
-    if (logo) {
-      t.push('- the logo (' + logo.file + '). It is its owner\'s mark and is not');
-      t.push('  under CC BY 4.0 unless the owner says so.');
-    }
-    t.push('- the program code in ' + (logo ? 'obs.html and logo.html' : 'obs.html') + ':');
-    t.push('  idle-web-animation, MIT License.');
-    t.push('');
+    licenseEnglish(t, credit, logo);
     return t.join('\r\n') + '\r\n';
   }
 
   function build(opts) {
     var problems = validate(opts);
     if (problems.length) throw new Error('IdleObsPackage.build: ' + problems.join('; '));
+    var lang = langOf(opts);
     var files = [{ name: 'obs.html', text: buildHtml(opts) }];
     if (opts.logo) files.push({ name: 'logo.html', text: buildLogoHtml(opts) });
-    files.push({ name: 'ANLEITUNG.txt', text: buildGuide(opts) });
+    files.push({ name: GUIDE_FILE[lang], text: lang === 'de' ? buildGuideDe(opts) : buildGuideEn(opts) });
     if (opts.license === 'CC-BY-4.0') files.push({ name: 'LICENSE.txt', text: buildLicense(opts) });
     return files;
   }
