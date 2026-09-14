@@ -131,6 +131,7 @@ nach unten:
 | **start mood** | Die Stimmung, mit der die Figur startet. Sie gilt auch für jede Szene ohne Stimmungswort im Namen (Teil D). |
 | **credit** | Wer die Figur gezeichnet hat, zum Beispiel `Max Muster (@maxmuster)`. Das Studio merkt sich den Text auf diesem Rechner. |
 | **licence** | `none` oder `CC BY 4.0`. Mit `CC BY 4.0` brauchst du einen Eintrag bei **credit** (Teil F). |
+| **guide language** | Die Sprache der Textdateien im Paket. `English` (so startet das Studio) schreibt `README.txt` und eine englische `LICENSE.txt`. `Deutsch` schreibt `ANLEITUNG.txt` und eine `LICENSE.txt` auf Deutsch und Englisch. Das Studio merkt sich die Wahl auf diesem Rechner. Einmal `Deutsch` wählen reicht also. |
 | **OBS package (zip)** | Baut das Paket und lädt es herunter. |
 
 Die drei Effekte **wipe-in**, **glow** und **gleam** schaltest du einzeln
@@ -153,7 +154,7 @@ Die Datei heißt `<figur>-obs.zip`, zum Beispiel `pedro-obs.zip`. Darin:
 | `layers/` | die Bilder der Figur, in der gewählten Größe |
 | `logo.html` | das Logo als eigene OBS-Quelle mit den gewählten Effekten, nur mit Logo |
 | `logo.webp` (oder `.png`, `.jpg`) | dein Logo als Bild, nur wenn du eins gewählt hast |
-| `ANLEITUNG.txt` | die Kurzanleitung für den Empfänger, mit der echten Breite und Höhe und den Stimmungen dieser Figur |
+| `ANLEITUNG.txt` oder `README.txt` | die Kurzanleitung für den Empfänger, mit der echten Breite und Höhe und den Stimmungen dieser Figur. `ANLEITUNG.txt` mit **guide language** `Deutsch`, `README.txt` auf Englisch. |
 | `LICENSE.txt` | nur mit Lizenz: wem die Bilder gehören und was CC BY 4.0 erlaubt |
 
 Der Hintergrund der Figur kommt nie mit. Die Seite bleibt durchsichtig.

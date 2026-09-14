@@ -332,7 +332,11 @@ function baseOpts(extra) {
     startState: 'neutral',
     credit: 'Max Muster (@maxmuster)',
     license: 'CC-BY-4.0',
-    date: '2026-09-13'
+    date: '2026-09-13',
+    /* The German package, as it was before English became the default. The
+     * checks below read German sentences; the English build has its own
+     * block further down. */
+    lang: 'de'
   }, extra || {});
 }
 
@@ -809,6 +813,126 @@ function runPage(html, sceneName) {
   check('ANLEITUNG.txt, logo aspect 12: 800 x 125', wide.indexOf('6. Breite (Width): 800\r\n7. Höhe (Height): 125\r\n') >= 0, true);
   const tall = fileOf(build(baseOpts({ logo: Object.assign({}, offLogo, { aspect: 0.08 }) })), 'ANLEITUNG.txt');
   check('ANLEITUNG.txt, logo aspect 0.08: 123 x 800', tall.indexOf('6. Breite (Width): 123\r\n7. Höhe (Height): 800\r\n') >= 0, true);
+})();
+
+/* L7 (gates/L7-english-package.md): English is the default package language.
+ * README.txt instead of ANLEITUNG.txt, an English-only LICENSE.txt, and a
+ * guide that covers every section the German one does, with the same real
+ * numbers and names. German stays one option away. */
+(function () {
+  const build = IdleObsPackage.build;
+  const credit = 'Max Muster (@maxmuster)';
+  const en = (extra) => baseOpts(Object.assign({ lang: undefined }, extra || {}));
+  const offLogo = Object.assign({}, baseOpts().logo, { inFigure: false });
+
+  const files = build(en({ logo: offLogo }));
+  check('English by default: obs.html, logo.html, README.txt, LICENSE.txt',
+    files.map((f) => f.name).join(','), 'obs.html,logo.html,README.txt,LICENSE.txt');
+  check('lang "en" is the same build as no lang', JSON.stringify(build(en({ lang: 'en', logo: offLogo }))), JSON.stringify(files));
+  check('lang "" is the same build as no lang', JSON.stringify(build(en({ lang: '', logo: offLogo }))), JSON.stringify(files));
+  check('lang "de": ANLEITUNG.txt, no README.txt',
+    build(baseOpts({ logo: offLogo })).map((f) => f.name).join(','), 'obs.html,logo.html,ANLEITUNG.txt,LICENSE.txt');
+  check('validate: lang "fr" is refused', /lang "fr"/.test(IdleObsPackage.validate(en({ lang: 'fr' })).join(' | ')), true);
+  check('validate: lang 1 is refused', /lang "1"/.test(IdleObsPackage.validate(en({ lang: 1 })).join(' | ')), true);
+  check('build(): throws on an unknown lang', throws(() => build(en({ lang: 'fr' }))), true);
+
+  const html = fileOf(files, 'obs.html');
+  const lh = fileOf(files, 'logo.html');
+  check('English: obs.html says lang="en"', html.indexOf('<html lang="en">') >= 0, true);
+  check('English: logo.html says lang="en"', lh.indexOf('<html lang="en">') >= 0, true);
+  check('German: obs.html says lang="de"', fileOf(build(baseOpts()), 'obs.html').indexOf('<html lang="de">') >= 0, true);
+  check('the language changes nothing in obs.html but the lang attribute',
+    html.replace('<html lang="en">', ''), fileOf(build(baseOpts({ logo: offLogo })), 'obs.html').replace('<html lang="de">', ''));
+
+  /* No German left in an English package's text files. The words are the
+   * ones the German guide and licence are made of. */
+  const german = /\b(und|nicht|die|der|das|Stimmung|Quelle|Lizenz|Bilder|Figur|Ordner|Haken|Breite|Höhe|Wähle|Klicke|Lokale|Datei|Urheber|Namensnennung|Seitenberechtigung)\b|[äöüß]/i;
+  const guide = fileOf(files, 'README.txt');
+  const lic = fileOf(files, 'LICENSE.txt');
+  check('README.txt: no German words', (guide.match(german) || [null])[0], null);
+  check('LICENSE.txt (en): no German words', (lic.match(german) || [null])[0], null);
+  check('README.txt: CRLF line ends like the German guide', /[^\r]\n/.test(guide), false);
+
+  /* Every section, in the German order. */
+  const heads = ['WHAT IS IN THIS FOLDER', 'ADD IT TO OBS (OBS 28 OR NEWER)', 'THE LOGO AS ITS OWN SOURCE',
+    'MOODS', 'CREDIT', 'IF SOMETHING DOES NOT WORK'];
+  const upper = guide.toUpperCase();
+  const at = heads.map((h) => guide.indexOf('\r\n' + h + '\r\n'));
+  check('README.txt: every section heading on a line of its own, in order',
+    at.every((i, k) => i > 0 && (k === 0 || i > at[k - 1])), true);
+  check('README.txt: title', guide.indexOf('Pedro in OBS\r\n') === 0, true);
+  check('README.txt: build date', guide.indexOf('Package built on 2026-09-13.') >= 0, true);
+
+  check('README.txt folder list',
+    ['obs.html       the figure.', 'layers         the pictures of the figure.', 'logo.html      the logo as its own source in OBS.',
+      'logo.webp      the logo as a picture.', 'README.txt     this guide.', 'LICENSE.txt    the licence of the pictures.']
+      .every((k) => guide.indexOf(k) >= 0), true);
+  check('README.txt: keep the folder together', guide.indexOf('Keep all files together in one folder.') >= 0, true);
+
+  /* A heading is a line of its own. The folder list says "the logo as its
+   * own source in OBS" too, so a bare search would find that first. */
+  const sec = (h) => upper.indexOf('\r\n' + h + '\r\n');
+  const steps = guide.slice(sec('ADD IT TO OBS (OBS 28 OR NEWER)'), sec('THE LOGO AS ITS OWN SOURCE'));
+  check('README.txt: the steps section is found between its headings', steps.length > 200, true);
+  check('README.txt steps: Sources, Browser, Local file, Browse, obs.html',
+    ['"Sources"', '"Browser"', '"Local file"', '"Browse"', 'Choose obs.html from this folder.'].every((k) => steps.indexOf(k) >= 0), true);
+  check('README.txt steps: real width and height', steps.indexOf('6. Width: 1792\r\n7. Height: 1000\r\n') >= 0, true);
+  check('README.txt steps: both checkboxes unticked',
+    steps.indexOf('Untick "Shutdown source when not visible".') >= 0 && steps.indexOf('Untick "Refresh browser when scene becomes active".') >= 0, true);
+  check('README.txt steps: English OBS labels only, no German label in brackets', /\((Sources|Local file|Width|Height|Browse)\)/.test(guide), false);
+
+  const logoSec = guide.slice(sec('THE LOGO AS ITS OWN SOURCE'), sec('MOODS'));
+  check('README.txt: the logo section is found between its headings', logoSec.length > 200 && logoSec.indexOf('WHAT IS IN') < 0, true);
+  check('README.txt logo: named Logo, logo.html, real size 800 x 520',
+    logoSec.indexOf('Enter the name "Logo".') >= 0 && logoSec.indexOf('Choose logo.html from this folder.') >= 0 &&
+    logoSec.indexOf('6. Width: 800\r\n7. Height: 520\r\n') >= 0, true);
+  check('README.txt logo: move, size, Alt crop, order, margin',
+    ['with the mouse', 'red corners', 'hold Alt', 'above the figure', 'Do not crop that margin away.'].every((k) => logoSec.indexOf(k) >= 0), true);
+  check('README.txt logo: Image source alternative with the file', logoSec.indexOf('"Image" instead of "Browser"') >= 0 && logoSec.indexOf('the file logo.webp from this folder') >= 0, true);
+  check('README.txt logo, inFigure false: says the logo is not in obs.html', logoSec.indexOf('The logo is not in obs.html.') >= 0, true);
+  const onGuide = fileOf(build(en()), 'README.txt');
+  check('README.txt logo, inFigure true: the extra source is optional',
+    onGuide.indexOf('The logo is already inside obs.html.') >= 0 && onGuide.indexOf('You only need this second source') >= 0, true);
+  check('README.txt without logo: no logo section, no logo.html', /THE LOGO AS|logo\.html/.test(fileOf(build(en({ logo: null })), 'README.txt')), false);
+  check('README.txt logo aspect 12: 800 x 125',
+    fileOf(build(en({ logo: Object.assign({}, offLogo, { aspect: 12 }) })), 'README.txt').indexOf('6. Width: 800\r\n7. Height: 125\r\n') >= 0, true);
+
+  const moods = guide.slice(upper.indexOf('\r\nMOODS\r\n'));
+  check('README.txt moods: the real names and the start', moods.indexOf('neutral, sad, happy') >= 0 && moods.indexOf('It starts with: neutral') >= 0, true);
+  check('README.txt moods: examples with the real names',
+    moods.indexOf('Scene "Pause sad"  ->  sad') >= 0 && moods.indexOf('Scene "Just Chatting happy"  ->  happy') >= 0 &&
+    moods.indexOf('Scene "Game"  ->  neutral (no mood word)') >= 0, true);
+  check('README.txt moods: page permission', moods.indexOf('"Page permissions"') >= 0 && moods.indexOf('"Read access to user information"') >= 0, true);
+  const noMoods = clone(pedro);
+  delete noMoods.states;
+  check('README.txt without moods: says so', fileOf(build(en({ figure: noMoods, startState: '' })), 'README.txt').indexOf('This figure only has the mood "neutral".') >= 0, true);
+
+  check('README.txt credit: the exact line to copy', guide.indexOf('\r\n  Figure: Pedro by ' + credit + ', CC BY 4.0\r\n') >= 0, true);
+  check('README.txt credit: licence URL, logo not covered, LICENSE.txt',
+    guide.indexOf('Licence: https://creativecommons.org/licenses/by/4.0/') >= 0 &&
+    guide.indexOf('The logo is not part of the licence.') >= 0 && guide.indexOf('More in LICENSE.txt.') >= 0, true);
+  const noLic = fileOf(build(en({ license: '' })), 'README.txt');
+  check('README.txt credit without licence: asks for credit, no licence line',
+    noLic.indexOf('Please credit the author of the figure') >= 0 && noLic.indexOf('Figure: Pedro by ' + credit + '\r\n') >= 0 && noLic.indexOf('Licence:') < 0, true);
+  check('README.txt without credit: no credit section', fileOf(build(en({ credit: '', license: '' })), 'README.txt').indexOf('CREDIT'), -1);
+
+  const trouble = guide.slice(upper.indexOf('IF SOMETHING DOES NOT WORK'));
+  check('README.txt troubleshooting: every case with real values',
+    ['The source stays empty:', 'Enter width 1792 and height 1000', 'The figure restarts at every scene change:',
+      '"sad-ish" does not count', 'Is logo.webp in the same folder as logo.html?', 'Help > About', '"Refresh cache of current page"']
+      .every((k) => trouble.indexOf(k) >= 0), true);
+
+  check('LICENSE.txt (en): English only, title, credit, URL',
+    lic.indexOf('Pedro - licence of the pictures\r\n') === 0 && lic.indexOf('DEUTSCH') < 0 && lic.indexOf('ENGLISH') < 0 &&
+    lic.indexOf(credit) >= 0 && lic.indexOf('https://creativecommons.org/licenses/by/4.0/') >= 0, true);
+  check('LICENSE.txt (en): the logo is not under CC BY, the code is MIT',
+    lic.indexOf("- the logo (logo.webp). It is its owner's mark") >= 0 &&
+    lic.indexOf('- the program code in obs.html and logo.html:\r\n  idle-web-animation, MIT License.') >= 0, true);
+  check('LICENSE.txt (en) is the English half of the German one, word for word',
+    fileOf(build(baseOpts({ logo: offLogo })), 'LICENSE.txt').indexOf(lic.slice(lic.indexOf('The pictures of this figure'))) >= 0, true);
+  check('no English build names Broening, Bröning or Daniel',
+    [files, build(en()), build(en({ logo: null, credit: '', license: '' }))].some((fs) => fs.some((f) => /broening|bröning|daniel/i.test(f.text))), false);
+  check('a name with spaces (en): credit line', fileOf(build(en({ name: 'mein pedro' })), 'README.txt').indexOf('Figure: Mein pedro by ' + credit) >= 0, true);
 })();
 
 if (failures) {
