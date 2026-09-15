@@ -20,6 +20,13 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute is the studio's one switch for "not now", but it is
+ * only the browser's display: none at the lowest priority. Any class here
+ * that sets display - .chk is flex - quietly wins over it: the brush slider
+ * carried hidden and still showed outside Mark mode. This puts the switch
+ * back on top for every element at once. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
