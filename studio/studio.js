@@ -2728,6 +2728,54 @@
     refreshSaveState();
   }
 
+  /* The see-through key list over the stage. It only describes handlers
+   * that live elsewhere in this file (bindUndo, bindNudgeKeys, bindPivotDrag,
+   * the marking brush), so when one of those changes, the list in index.html
+   * has to change with it. Hidden or shown is a preference of the person,
+   * kept per browser like the rail layout. */
+  var KEYS_HIDDEN_KEY = 'idle-studio-keys-hidden';
+
+  function readKeysHidden() {
+    try { return window.localStorage.getItem(KEYS_HIDDEN_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  function writeKeysHidden(hidden) {
+    try { window.localStorage.setItem(KEYS_HIDDEN_KEY, hidden ? '1' : '0'); } catch (e) { /* shown next time */ }
+  }
+
+  function showKeys(on) {
+    $('keysPanel').hidden = !on;
+    $('keysBtn').setAttribute('aria-pressed', String(on));
+  }
+
+  /* Marking gives the left and right buttons other jobs, so the list swaps
+   * to the rows that are true while the brush is out. */
+  function syncKeysMode() {
+    $('keysEdit').hidden = marks.on;
+    $('keysMark').hidden = !marks.on;
+  }
+
+  function toggleKeys() {
+    var on = $('keysPanel').hidden;
+    showKeys(on);
+    writeKeysHidden(!on);
+  }
+
+  function bindKeysPanel() {
+    showKeys(!readKeysHidden());
+    syncKeysMode();
+    $('keysBtn').addEventListener('click', toggleKeys);
+    window.addEventListener('keydown', function (e) {
+      /* "?" is Shift plus another key on most layouts, so e.key is the only
+       * test that works everywhere. A question mark typed into a name field
+       * is a question mark. */
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (typingIn(e.target) || (e.target && e.target.tagName === 'SELECT')) return;
+      e.preventDefault();
+      toggleKeys();
+    });
+  }
+
   var ARROW_STEP = {
     ArrowLeft: [-1, 0], ArrowRight: [1, 0],
     ArrowUp: [0, -1], ArrowDown: [0, 1]
@@ -4539,6 +4587,7 @@
     $('markBtn').setAttribute('aria-pressed', String(marks.on));
     $('markBtn').className = 'btn' + (marks.on ? ' primary' : '');
     $('overlay').classList.toggle('painting', marks.on);
+    syncKeysMode();
     if (marks.on) {
       sizeMarks();
       applyView();
@@ -5155,6 +5204,7 @@
     bindPivotDrag();
     bindNudgeKeys();
     bindUndo();
+    bindKeysPanel();
     bindObsPackage();
 
     /* Pointer tracking is bound once, to the overlay, and forwarded to

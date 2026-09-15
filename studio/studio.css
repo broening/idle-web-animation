@@ -20,6 +20,13 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute is the studio's one switch for "not now", but it is
+ * only the browser's display: none at the lowest priority. Any class here
+ * that sets display - .chk is flex - quietly wins over it: the brush slider
+ * carried hidden and still showed outside Mark mode. This puts the switch
+ * back on top for every element at once. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -207,6 +214,84 @@ html, body {
   height: 100%;
   cursor: crosshair;
 }
+
+/* The key list over the stage. See-through on purpose: it sits on the
+ * figure you are working on, so the figure has to stay visible behind it.
+ * pointer-events: none lets a drag or a wheel that starts on the list reach
+ * the stage as if the list were not there. Only its button is clickable. */
+.keys {
+  position: absolute;
+  left: 10px;
+  bottom: 46px;
+  z-index: 3;
+  max-width: 300px;
+  /* Never taller than the stage it sits on. A short stage cuts the list off
+   * at its top edge instead of pushing it over the toolbar. */
+  max-height: calc(100% - 56px);
+  overflow: hidden;
+  padding: 8px 10px 6px;
+  background: rgba(14, 16, 19, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.keys[hidden],
+.keys-list[hidden] { display: none; }
+
+.keys-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 0;
+}
+
+.keys-list dt { white-space: nowrap; color: var(--ink); }
+.keys-list dd { margin: 0; color: #c3cad4; }
+
+.keys-foot {
+  margin: 6px 0 0;
+  color: #c3cad4;
+  font-size: 11px;
+}
+
+.keys kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 4px;
+  margin: 0 1px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  font: 600 11px/1.4 "Segoe UI", system-ui, sans-serif;
+  text-align: center;
+  text-shadow: none;
+}
+
+.keys-btn {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(14, 16, 19, 0.55);
+  color: var(--ink-2);
+  font: 700 14px/1 "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.keys-btn:hover { color: var(--ink); background: rgba(14, 16, 19, 0.8); }
+.keys-btn[aria-pressed="true"] { color: var(--accent); }
 
 /* The OBS logo preview: a child of the mounted figure's own idle-stage div,
  * in canvas pixels, so it scales with the same transform every layer does

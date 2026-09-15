@@ -164,6 +164,38 @@
              canvas when Place is pressed is exactly what gets written. -->
         <canvas id="place" class="marks place" hidden></canvas>
         <canvas id="overlay" class="overlay"></canvas>
+
+        <!-- The keys and mouse moves the stage understands, laid over it and
+             see-through. Only the button takes clicks; the list lets every
+             drag and wheel through to the stage underneath. -->
+        <div id="keysPanel" class="keys" role="note" aria-label="keyboard and mouse">
+          <dl id="keysEdit" class="keys-list">
+            <dt>drag a dot</dt><dd>move the pivot</dd>
+            <dt><kbd>Alt</kbd> + drag</dt><dd>move the selected picture</dd>
+            <dt><kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd></dt><dd>move it 1 px</dd>
+            <dt><kbd>Shift</kbd> + arrows</dt><dd>move it 10 px</dd>
+            <dt>drag elsewhere</dt><dd>pan the view</dd>
+            <dt>middle button</dt><dd>pan, even over a dot</dd>
+            <dt>wheel</dt><dd>zoom to the pointer</dd>
+            <dt><kbd>Shift</kbd> + wheel</dt><dd>slide sideways</dd>
+            <dt>double-click</dt><dd>fit the whole figure</dd>
+            <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>undo, one step back</dd>
+            <dt><kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>redo, one step forward</dd>
+            <dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></dt><dd>redo as well</dd>
+          </dl>
+          <dl id="keysMark" class="keys-list" hidden>
+            <dt>drag</dt><dd>paint the current part</dd>
+            <dt>right button</dt><dd>erase</dd>
+            <dt><kbd>Alt</kbd> + drag</dt><dd>erase</dd>
+            <dt>middle button</dt><dd>pan the view</dd>
+            <dt>wheel</dt><dd>zoom to the pointer</dd>
+            <dt>double-click</dt><dd>fit the whole figure</dd>
+          </dl>
+          <p class="keys-foot"><kbd>Ctrl</kbd> is <kbd>&#8984;</kbd> on a Mac.
+          <kbd>?</kbd> hides this list.</p>
+        </div>
+        <button id="keysBtn" class="keys-btn" type="button" aria-pressed="true"
+                aria-controls="keysPanel" title="show or hide the keys (?)">?</button>
       </div>
 
       <div class="transport">
